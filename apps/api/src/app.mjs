@@ -3,8 +3,11 @@ import { fileURLToPath } from 'node:url';
 import { cookie, parseCookies, readJson, sendJson, sendProblem, serveStatic } from './http.mjs';
 import { decryptSecret, encryptSecret, randomId, signToken, verifyPassword, verifyToken } from './security.mjs';
 import { GEMINI_MODELS, generateGeminiVisualization, publicGeminiSettings, testGeminiConnection } from './gemini.mjs';
+import { COVERAGE_ZONES, HAIRLINE_PRESETS, renderSimulation, renderVariants, renderPhotoSimulation, renderPhotoVariants, DEMO_SCALP } from './simulator.mjs';
+import { readFile } from 'node:fs/promises';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const assetRoot = path.resolve(here, '../assets');
 const clinicRoot = path.resolve(here, '../../clinic-pwa/public');
 const patientRoot = path.resolve(here, '../../patient-pwa/public');
 
@@ -228,6 +231,114 @@ export function createHandler({ store, sessionSecret, masterKey, secureCookies =
         const auth = requireSession(req, res, ctx); if (!auth) return;
         if (!requireAdmin(res, auth)) return;
         return sendJson(res, 200, { events: store.data.auditEvents.slice(-200).reverse() });
+      }
+
+      // ----- Parametric hair-transplant simulator -----
+      // Always available, no external API. Returns a watermarked SVG.
+      if (req.method === 'GET' && url.pathname === '/api/simulator/presets') {
+        return sendJson(res, 200, {
+          hairlines: Object.values(HAIRLINE_PRESETS).map(p => ({ id: p.id, label: p.label, description: p.description })),
+          zones: Object.values(COVERAGE_ZONES).map(z => ({ id: z.id, label: z.label, grafts: z.grafts }))
+        });
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/simulator/render') {
+        const auth = requireSession(req, res, ctx); if (!auth) return;
+        if (!requireCsrf(req, res, auth)) return;
+        const body = await readJson(req).catch(() => ({}));
+        const safe = {
+          hairline: HAIRLINE_PRESETS[body.hairline] ? body.hairline : 'balanced',
+          zone: COVERAGE_ZONES[body.zone] ? body.zone : 'full',
+          density: Math.max(0, Math.min(1, Number(body.density) || 0.55)),
+          length: ['buzz','short','medium','long'].includes(body.length) ? body.length : 'short',
+          color: ['black','darkBrown','mediumBrown','lightBrown','blonde','saltPepper'].includes(body.color) ? body.color : 'darkBrown',
+          skinTone: ['light','medium','deep'].includes(body.skinTone) ? body.skinTone : 'medium'
+        };
+        const seed = Number.isInteger(body.seed) ? body.seed : undefined;
+        const artifact = renderSimulation({ ...safe, seed });
+        await audit(store, { action: 'simulator.rendered', actorUserId: auth.user.id, hairline: safe.hairline, zone: safe.zone, density: safe.density, length: safe.length, color: safe.color, correlationId: res.correlationId });
+        return sendJson(res, 201, artifact);
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/simulator/variants') {
+        const auth = requireSession(req, res, ctx); if (!auth) return;
+        if (!requireCsrf(req, res, auth)) return;
+        const body = await readJson(req).catch(() => ({}));
+        const safe = {
+          zone: COVERAGE_ZONES[body.zone] ? body.zone : 'full',
+          density: Math.max(0, Math.min(1, Number(body.density) || 0.55)),
+          length: ['buzz','short','medium','long'].includes(body.length) ? body.length : 'short',
+          color: ['black','darkBrown','mediumBrown','lightBrown','blonde','saltPepper'].includes(body.color) ? body.color : 'darkBrown',
+          skinTone: ['light','medium','deep'].includes(body.skinTone) ? body.skinTone : 'medium',
+          variants: ['conservative','balanced','restorative']
+        };
+        const artifacts = renderVariants(safe);
+        await audit(store, { action: 'simulator.variants_rendered', actorUserId: auth.user.id, count: artifacts.length, correlationId: res.correlationId });
+        return sendJson(res, 200, { variants: artifacts });
+      }
+
+      // ----- Photo-based simulator (takes the bundled demo patient photo) -----
+      if (req.method === 'GET' && url.pathname === '/api/simulator/base-image') {
+        try {
+          const buf = await readFile(path.join(assetRoot, 'sample-patient.webp'));
+          res.writeHead(200, { 'content-type': 'image/webp', 'cache-control': 'public, max-age=300' });
+          return res.end(buf);
+        } catch (error) {
+          if (error.code === 'ENOENT') return sendProblem(res, 404, 'BASE_IMAGE_NOT_FOUND', 'Demo image missing', 'The bundled demo patient photo is not present in the build.');
+          throw error;
+        }
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/simulator/base-image-info') {
+        return sendJson(res, 200, {
+          id: 'sample-patient',
+          width: DEMO_SCALP.width,
+          height: DEMO_SCALP.height,
+          description: 'Synthetic demo patient (Shutterstock-style balding male). No real patient data.',
+          attribution: 'Bundled with the repository; not a real patient.'
+        });
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/simulator/apply') {
+        const auth = requireSession(req, res, ctx); if (!auth) return;
+        if (!requireCsrf(req, res, auth)) return;
+        const body = await readJson(req).catch(() => ({}));
+        const safe = {
+          hairline: HAIRLINE_PRESETS[body.hairline] ? body.hairline : 'balanced',
+          zone: COVERAGE_ZONES[body.zone] ? body.zone : 'full',
+          density: Math.max(0, Math.min(1, Number(body.density) || 0.6)),
+          length: ['buzz','short','medium','long'].includes(body.length) ? body.length : 'short',
+          color: ['black','darkBrown','mediumBrown','lightBrown','blonde','saltPepper'].includes(body.color) ? body.color : 'darkBrown'
+        };
+        const seed = Number.isInteger(body.seed) ? body.seed : undefined;
+        let photoBase64 = null;
+        try {
+          const buf = await readFile(path.join(assetRoot, 'sample-patient.webp'));
+          photoBase64 = buf.toString('base64');
+        } catch {}
+        const artifact = renderPhotoSimulation({ ...safe, photoBase64, seed });
+        await audit(store, { action: 'simulator.photo_applied', actorUserId: auth.user.id, hairline: safe.hairline, zone: safe.zone, density: safe.density, length: safe.length, color: safe.color, correlationId: res.correlationId });
+        return sendJson(res, 201, artifact);
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/simulator/photo-variants') {
+        const auth = requireSession(req, res, ctx); if (!auth) return;
+        if (!requireCsrf(req, res, auth)) return;
+        const body = await readJson(req).catch(() => ({}));
+        const safe = {
+          zone: COVERAGE_ZONES[body.zone] ? body.zone : 'full',
+          density: Math.max(0, Math.min(1, Number(body.density) || 0.6)),
+          length: ['buzz','short','medium','long'].includes(body.length) ? body.length : 'short',
+          color: ['black','darkBrown','mediumBrown','lightBrown','blonde','saltPepper'].includes(body.color) ? body.color : 'darkBrown'
+        };
+        let photoBase64 = null;
+        try {
+          const buf = await readFile(path.join(assetRoot, 'sample-patient.webp'));
+          photoBase64 = buf.toString('base64');
+        } catch {}
+        const artifacts = renderPhotoVariants({ ...safe, photoBase64 });
+        await audit(store, { action: 'simulator.photo_variants', actorUserId: auth.user.id, count: artifacts.length, correlationId: res.correlationId });
+        return sendJson(res, 200, { variants: artifacts, baseImage: `/api/simulator/base-image` });
       }
 
       if (url.pathname === '/') {

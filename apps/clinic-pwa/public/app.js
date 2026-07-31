@@ -71,7 +71,7 @@ const navItems = [
     ['patients', 'Patients', '◉'],
     ['planning', 'Hairline Lab', '⌁'],
     ['procedures', 'Procedure Board', '▦'],
-    ['visualization', 'AI Sandbox', '✦'],
+    ['visualization', 'Hair Simulator', '✦'],
     ['settings', 'Settings', '⚙']
 ];
 function shell(content, title, subtitle) {
@@ -399,67 +399,161 @@ function proceduresView() {
   `, 'Procedure Board', 'Auditable phase controls and graft reconciliation.');
 }
 async function visualizationView() {
-    const settings = await api('/settings/integrations/gemini');
+    // Photo-based hair-transplant simulator. The bundled demo photo is the
+    // base; the user adjusts hairline, density, zone, color and length and
+    // the result is a composite SVG with a permanent "SIMULAÇÃO HIPOTÉTICA"
+    // watermark. No external API, no third-party calls — works every time.
     shell(`
-    <div class="two-column">
-      <article class="instrument-panel">
-        <div class="section-heading">
-          <div><p class="eyebrow">NON-CLINICAL SANDBOX</p><h2>Generate a synthetic concept</h2></div>
-          <span class="chip ${settings.enabled ? '' : 'warning'}">${settings.enabled ? 'Enabled' : 'Disabled'}</span>
+    <div class="simulator-layout">
+      <article class="instrument-panel sim-source">
+        <p class="eyebrow">BEFORE</p>
+        <h2 class="section-h2-tight">Baseline photo</h2>
+        <div class="sim-frame">
+          <img id="sim-before" src="/api/simulator/base-image" alt="Bundled demo patient photo (not a real patient)"/>
         </div>
-        <form id="visual-form" class="stack">
-          <label>Hair style concept<input name="style" placeholder="Short textured dark hair" required></label>
-          <label>Coverage concept
-            <select name="coverage">
-              <option>Conservative frontal coverage</option>
-              <option>Balanced frontal and midscalp coverage</option>
-              <option>Educational crown coverage concept</option>
-            </select>
-          </label>
-          <label>Hairline concept
-            <select name="hairline">
-              <option>Mature conservative hairline</option>
-              <option>Balanced natural irregularity</option>
-              <option>High-density-looking style without clinical claim</option>
-            </select>
-          </label>
-          <label>Neutral design notes<textarea name="notes" rows="4" placeholder="No patient name, CPF, diagnosis or expected result."></textarea></label>
-          <button class="primary" ${settings.enabled ? '' : 'disabled'}>Generate watermarked concept</button>
-        </form>
-        <div class="safety-note mt-14">
+        <p class="muted mt-8">Bundled synthetic demo. No real patient data is processed.</p>
+      </article>
+      <article class="instrument-panel sim-target">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">AFTER · SIMULAÇÃO</p>
+            <h2>Restored hairline preview</h2>
+          </div>
+          <span id="sim-summary" class="chip muted">Awaiting render</span>
+        </div>
+        <div class="sim-frame">
+          <div id="sim-after-wrap" class="visual-placeholder">
+            <span>✦</span>
+            <p>Adjust the controls and press <strong>Render</strong> to see the restored hairline.</p>
+          </div>
+        </div>
+        <div class="safety-note mt-8">
           <strong>Hard boundary</strong>
           <span>Synthetic concept only. No patient photograph upload, diagnosis, prediction or guaranteed outcome.</span>
         </div>
       </article>
-      <article class="instrument-panel result-panel">
-        <p class="eyebrow">OUTPUT</p>
-        <h2 class="section-h2-tight">Hypothetical visualization</h2>
-        <div id="visual-output" class="visual-placeholder">
-          <span>✦</span>
-          <p>The generated image will appear here with a permanent watermark.</p>
-        </div>
+      <article class="instrument-panel sim-controls">
+        <p class="eyebrow">PARAMETERS</p>
+        <h2 class="section-h2-tight">Adjust the simulation</h2>
+        <form id="sim-form" class="stack">
+          <label>Hairline shape
+            <select name="hairline">
+              <option value="conservative">Mature conservative</option>
+              <option value="balanced" selected>Balanced natural</option>
+              <option value="restorative">Restorative youthful</option>
+              <option value="feminine">Feminine rounded</option>
+            </select>
+          </label>
+          <label>Coverage zone
+            <select name="zone">
+              <option value="frontal">Frontal band</option>
+              <option value="midscalp">Frontal + midscalp</option>
+              <option value="crown">Frontal + crown</option>
+              <option value="full" selected>Full scalp</option>
+              <option value="temples">Temples + frontal</option>
+            </select>
+          </label>
+          <label>Density
+            <input type="range" name="density" min="0" max="1" step="0.05" value="0.65"/>
+            <small>Visual hair count (no clinical graft estimate).</small>
+          </label>
+          <label>Length
+            <select name="length">
+              <option value="buzz">Buzz (3 mm)</option>
+              <option value="short" selected>Short (15 mm)</option>
+              <option value="medium">Medium (40 mm)</option>
+              <option value="long">Long (80 mm)</option>
+            </select>
+          </label>
+          <label>Hair color
+            <select name="color">
+              <option value="black">Black</option>
+              <option value="darkBrown" selected>Dark brown</option>
+              <option value="mediumBrown">Medium brown</option>
+              <option value="lightBrown">Light brown</option>
+              <option value="blonde">Blonde</option>
+              <option value="saltPepper">Salt &amp; pepper</option>
+            </select>
+          </label>
+          <div class="button-row">
+            <button class="primary" type="submit" id="sim-render">Render</button>
+            <button class="secondary" type="button" id="sim-variants">3 alternatives</button>
+          </div>
+        </form>
       </article>
     </div>
-  `, 'AI Sandbox', 'Optional, server-side Gemini image generation with strict guardrails.');
-    document.querySelector('#visual-form')?.addEventListener('submit', async (event) => {
+    <article class="instrument-panel mt-20 sim-variants-hidden" id="sim-variants-panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">VARIANT GALLERY</p>
+          <h2>Three looks at the current parameters</h2>
+        </div>
+        <button class="secondary" id="sim-variants-close">Hide</button>
+      </div>
+      <div class="variant-grid" id="sim-variants-grid"></div>
+    </article>
+  `, 'Hair Simulator', 'Photo-based hairline & density simulator. Always-on, no API dependency.');
+    await renderSimulatorView();
+}
+async function renderSimulatorView() {
+    // Submit handler for single render
+    document.querySelector('#sim-form')?.addEventListener('submit', async (event) => {
         event.preventDefault();
-        const formElement = event.currentTarget;
-        const button = formElement.querySelector('button');
+        const form = event.currentTarget;
+        const body = Object.fromEntries(new FormData(form));
+        const button = form.querySelector('#sim-render');
         button.disabled = true;
-        button.textContent = 'Generating…';
+        button.textContent = 'Rendering…';
         try {
-            const body = Object.fromEntries(new FormData(formElement));
-            const result = await api('/visualizations', { method: 'POST', body: JSON.stringify(body) });
-            const out = document.querySelector('#visual-output');
-            out.innerHTML = `<img src="${result.outputDataUrl}" alt="Watermarked hypothetical synthetic hair concept"><p class="muted">${escapeHtml(result.model)} · ${escapeHtml(result.createdAt)}</p>`;
+            const result = await api('/simulator/apply', { method: 'POST', body: JSON.stringify(body) });
+            const wrap = document.querySelector('#sim-after-wrap');
+            wrap.classList.remove('visual-placeholder');
+            wrap.innerHTML = `<img src="${result.outputDataUrl}" alt="Simulated hairline render"><p class="muted">${escapeHtml(result.hairline)} · ${escapeHtml(result.length)} · ${escapeHtml(result.color)} · graft estimate ${result.grafts}</p>`;
+            const sum = document.querySelector('#sim-summary');
+            sum.className = 'chip';
+            sum.textContent = `${result.grafts} grafts · ${result.hairline}`;
         }
         catch (error) {
             toast(error.message, 'error');
         }
         finally {
             button.disabled = false;
-            button.textContent = 'Generate watermarked concept';
+            button.textContent = 'Render';
         }
+    });
+    // Variants handler
+    document.querySelector('#sim-variants')?.addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = 'Rendering 3…';
+        try {
+            const form = document.querySelector('#sim-form');
+            const body = Object.fromEntries(new FormData(form));
+            const result = await api('/simulator/photo-variants', { method: 'POST', body: JSON.stringify(body) });
+            const grid = document.querySelector('#sim-variants-grid');
+            grid.innerHTML = result.variants.map((v) => `
+        <figure class="variant-card">
+          <img src="${v.outputDataUrl}" alt="${escapeHtml(v.hairline)} variant"/>
+          <figcaption>
+            <strong>${escapeHtml(v.hairline)}</strong>
+            <span>${v.grafts} grafts · ${escapeHtml(v.length)} · ${escapeHtml(v.color)}</span>
+          </figcaption>
+        </figure>
+      `).join('');
+            const panel = document.querySelector('#sim-variants-panel');
+            panel.classList.remove('sim-variants-hidden');
+        }
+        catch (error) {
+            toast(error.message, 'error');
+        }
+        finally {
+            button.disabled = false;
+            button.textContent = '3 alternatives';
+        }
+    });
+    document.querySelector('#sim-variants-close')?.addEventListener('click', () => {
+        const panel = document.querySelector('#sim-variants-panel');
+        panel.classList.add('sim-variants-hidden');
     });
 }
 async function settingsView() {
