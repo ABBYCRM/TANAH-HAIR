@@ -40,7 +40,7 @@ function loginView() {
         <p class="subtle">Hair-transplant planning, procedure operations and patient journey.</p>
         <form id="login-form" class="stack">
           <label>Email<input name="email" type="email" value="admin@tanah.hair" autocomplete="username" required></label>
-          <label>Password<input name="password" type="password" value="ChangeMe!2026" autocomplete="current-password" required></label>
+          <label>Password<input name="password" type="password" value="1234" autocomplete="current-password" required></label>
           <button class="primary" type="submit">Enter clinical workspace</button>
           <p id="login-error" class="form-error" role="alert"></p>
         </form>

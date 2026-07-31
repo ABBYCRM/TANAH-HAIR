@@ -100,7 +100,7 @@ export async function generateGeminiVisualization({ record, masterKey, input, fe
     body: JSON.stringify({
       model: record.model,
       input: prompt,
-      response_format: { type: 'image', mime_type: 'image/png', aspect_ratio: '1:1', image_size: '1K' }
+      response_format: { type: 'image', mime_type: 'image/jpeg', aspect_ratio: '1:1', image_size: '1K' }
     }),
     signal: AbortSignal.timeout(90_000)
   });
