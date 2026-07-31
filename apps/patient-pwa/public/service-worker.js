@@ -32,6 +32,6 @@ self.addEventListener('fetch', event => {
         caches.open(CACHE).then(cache => cache.put(req, copy));
       }
       return res;
-    }).catch(() => caches.match('/patient/index.html') as Promise<Response>))
+    }).catch(() => caches.match('/patient/index.html')))
   );
 });
