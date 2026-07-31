@@ -33,9 +33,9 @@ Open `http://localhost:3000/clinic/`.
 Development demo credentials default to:
 
 - Email: `admin@tanah.hair`
-- Password: `ChangeMe!2026`
+- Password: `1234`
 
-Change these before any shared deployment.
+The same password is used as the step-up authentication when changing Gemini settings. Change these before any shared deployment.
 
 ## Gemini setting flow
 

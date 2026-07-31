@@ -39,7 +39,7 @@ const masterKey = await resolveMasterKey(dataDir);
 const store = await new JsonStore({
   dataDir,
   adminEmail: process.env.DEMO_ADMIN_EMAIL || 'admin@tanah.hair',
-  adminPassword: process.env.DEMO_ADMIN_PASSWORD || 'ChangeMe!2026'
+  adminPassword: process.env.DEMO_ADMIN_PASSWORD || '1234'
 }).init();
 
 const server = createServer(createHandler({
