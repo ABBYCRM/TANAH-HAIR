@@ -1,1 +1,37 @@
-const C='tanah-hair-patient-v1',A=['/patient/','/patient/index.html','/patient/styles.css','/patient/app.js','/patient/icon.svg'];self.addEventListener('install',e=>e.waitUntil(caches.open(C).then(c=>c.addAll(A))));self.addEventListener('fetch',e=>{if(e.request.method==='GET'&&!new URL(e.request.url).pathname.startsWith('/api/'))e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||caches.match('/patient/index.html'))))});
+// TANAH-HAIR patient PWA service worker — minimal offline cache.
+const CACHE = 'tanah-hair-patient-v1';
+const PRECACHE = [
+  '/patient/',
+  '/patient/index.html',
+  '/patient/styles.css',
+  '/patient/app.js',
+  '/patient/manifest.webmanifest',
+  '/patient/icon.svg'
+];
+
+self.addEventListener('install', event => {
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(PRECACHE)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', event => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return;
+  event.respondWith(
+    caches.match(req).then(cached => cached || fetch(req).then(res => {
+      if (res.ok && url.pathname.startsWith('/patient/')) {
+        const copy = res.clone();
+        caches.open(CACHE).then(cache => cache.put(req, copy));
+      }
+      return res;
+    }).catch(() => caches.match('/patient/index.html') as Promise<Response>))
+  );
+});
