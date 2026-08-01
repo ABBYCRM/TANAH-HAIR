@@ -116,7 +116,6 @@ function shell(content, title, subtitle) {
             <strong>${escapeHtml(state.user?.displayName)}</strong>
             <span>${escapeHtml(state.user?.role)}</span>
           </div>
-          <button id="logout" class="ghost">Sign out</button>
         </div>
       </aside>
       <main class="workspace">
@@ -135,15 +134,6 @@ function shell(content, title, subtitle) {
       </main>
     </div>
   `;
-    document.querySelector('#logout')?.addEventListener('click', async () => {
-        try {
-            await api('/auth/logout', { method: 'POST' });
-        }
-        catch { }
-        state.user = null;
-        state.csrfToken = '';
-        loginView();
-    });
 }
 // ----- Signature components -----
 function hairlineLabCanvas() {
@@ -832,4 +822,20 @@ async function render() {
 window.addEventListener('hashchange', () => { state.route = location.hash.slice(1) || 'dashboard'; render(); });
 if ('serviceWorker' in navigator)
     navigator.serviceWorker.register('/clinic/service-worker.js').catch(console.error);
-api('/auth/me').then(result => { state.user = result.user; state.csrfToken = result.csrfToken; render(); }).catch(() => loginView());
+// Auto-login: try an existing session first; if none, create a demo session
+// (the API seeds an admin user and the demo endpoint mints a session for it
+// without a password). No login screen unless the demo endpoint is disabled.
+api('/auth/me')
+    .then(result => { state.user = result.user; state.csrfToken = result.csrfToken; render(); })
+    .catch(() => api('/auth/demo', { method: 'POST' })
+    .then(result => { state.user = result.user; state.csrfToken = result.csrfToken; render(); })
+    .catch(error => {
+    // Demo auto-login disabled — fall back to the legacy login screen.
+    if (error.message.toLowerCase().includes('demo') ||
+        error.message.toLowerCase().includes('disabled')) {
+        loginView();
+    }
+    else {
+        loginView();
+    }
+}));

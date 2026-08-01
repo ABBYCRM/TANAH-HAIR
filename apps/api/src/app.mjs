@@ -65,7 +65,7 @@ function requireStepUp(req, res, auth, sessionSecret) {
   return true;
 }
 
-export function createHandler({ store, sessionSecret, masterKey, secureCookies = false, fetchImpl = fetch }) {
+export function createHandler({ store, sessionSecret, masterKey, secureCookies = false, fetchImpl = fetch, env = process.env }) {
   const ctx = { store, sessionSecret, masterKey, secureCookies, fetchImpl };
   return async function handler(req, res) {
     res.correlationId = req.headers['x-correlation-id'] || randomId(10);
@@ -97,6 +97,27 @@ export function createHandler({ store, sessionSecret, masterKey, secureCookies =
         const token = signToken({ type: 'session', sid: session.id, uid: user.id, exp: session.expiresAt }, sessionSecret);
         await audit(store, { action: 'auth.login_succeeded', actorUserId: user.id, correlationId: res.correlationId });
         return sendJson(res, 200, { user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role }, csrfToken: session.csrfToken }, {
+          'set-cookie': cookie('tanah_session', token, { maxAge: 8 * 60 * 60, secure: secureCookies })
+        });
+      }
+
+      // Demo auto-login: no password, picks the seeded admin. Used by the
+      // front-end to skip the login screen on first load. Disable in real
+      // production by setting TANAH_REQUIRE_LOGIN=1.
+      if (req.method === 'POST' && url.pathname === '/api/auth/demo') {
+        if (env.TANAH_REQUIRE_LOGIN === '1') {
+          return sendProblem(res, 403, 'DEMO_DISABLED', 'Demo auto-login disabled', 'Set TANAH_REQUIRE_LOGIN=0 to enable.');
+        }
+        const admin = store.data.users.find(item => item.role === 'admin' && item.active) || store.data.users.find(item => item.active);
+        if (!admin) return sendProblem(res, 503, 'NO_USERS', 'No demo user available', 'No active user found in the store.');
+        const session = { id: randomId(), userId: admin.id, csrfToken: randomId(), expiresAt: Date.now() + 8 * 60 * 60 * 1000, createdAt: nowIso() };
+        await store.mutate(data => {
+          data.sessions = data.sessions.filter(item => item.expiresAt > Date.now() && item.userId !== admin.id);
+          data.sessions.push(session);
+        });
+        const token = signToken({ type: 'session', sid: session.id, uid: admin.id, exp: session.expiresAt }, sessionSecret);
+        await audit(store, { action: 'auth.demo_auto_login', actorUserId: admin.id, correlationId: res.correlationId });
+        return sendJson(res, 200, { user: { id: admin.id, email: admin.email, displayName: admin.displayName, role: admin.role }, csrfToken: session.csrfToken }, {
           'set-cookie': cookie('tanah_session', token, { maxAge: 8 * 60 * 60, secure: secureCookies })
         });
       }

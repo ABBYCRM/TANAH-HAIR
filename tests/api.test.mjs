@@ -179,3 +179,39 @@ test('photo simulator applies HairPath spec parameters and spec-mandated waterma
     assert.equal(attached[0].id, 'front');
   } finally { await app.close(); }
 });
+
+test('demo auto-login mints a session without a password', async () => {
+  const app = await setup();
+  try {
+    // No cookie, no body, no headers — should still work.
+    const response = await fetch(`${app.base}/api/auth/demo`, { method: 'POST' });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.user.email, 'admin@test.local');
+    assert.equal(body.user.role, 'admin');
+    assert.match(body.csrfToken, /^[A-Za-z0-9_-]+$/);
+    const setCookie = response.headers.get('set-cookie');
+    assert.match(setCookie, /tanah_session=/);
+    // The minted session should work for an authenticated endpoint.
+    const me = await fetch(`${app.base}/api/auth/me`, { headers: { cookie: setCookie.split(';')[0] } });
+    assert.equal(me.status, 200);
+    assert.equal((await me.json()).user.email, 'admin@test.local');
+  } finally { await app.close(); }
+});
+
+test('demo auto-login is blocked when TANAH_REQUIRE_LOGIN=1', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'tanah-hair-test-'));
+  const store = await new JsonStore({ dataDir, adminEmail: 'admin@test.local', adminPassword: 'pw' }).init();
+  const masterKey = Buffer.alloc(32, 7);
+  const server = createServer(createHandler({ store, sessionSecret: 'test-session-secret-that-is-long-enough', masterKey, fetchImpl: fetch, env: { TANAH_REQUIRE_LOGIN: '1' } }));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const response = await fetch(`${base}/api/auth/demo`, { method: 'POST' });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).code, 'DEMO_DISABLED');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
