@@ -28,21 +28,42 @@ export class JsonStore {
     const now = new Date().toISOString();
     return {
       schemaVersion: 1,
-      users: [{
-        id: randomId(),
-        email: this.adminEmail.toLowerCase(),
-        displayName: 'Administrator TANAH-HAIR',
-        role: 'admin',
-        passwordHash: hashPassword(this.adminPassword),
-        active: true,
-        createdAt: now
-      }],
+      users: [
+        {
+          id: randomId(),
+          email: this.adminEmail.toLowerCase(),
+          displayName: 'Administrator TANAH-HAIR',
+          role: 'admin',
+          passwordHash: hashPassword(this.adminPassword),
+          active: true,
+          createdAt: now
+        },
+        {
+          id: randomId(),
+          email: 'juliana@tanah.hair',
+          displayName: 'Dra. Juliana Ribeiro',
+          role: 'clinician',
+          passwordHash: hashPassword('1234'),
+          active: true,
+          createdAt: now
+        },
+        {
+          id: randomId(),
+          email: 'assistant@tanah.hair',
+          displayName: 'Care assistant',
+          role: 'assistant',
+          passwordHash: hashPassword('1234'),
+          active: true,
+          createdAt: now
+        }
+      ],
       sessions: [],
       integrations: {},
       patients: [
         { id: 'pt-demo-001', initials: 'MR', preferredName: 'Marcos', stage: 'Consultation', nextAction: 'Standardized photo set', riskChips: ['Allergy review'], photoConsent: 'care-only' },
         { id: 'pt-demo-002', initials: 'AL', preferredName: 'Ana', stage: 'Planning', nextAction: 'Surgeon plan signature', riskChips: ['Smoking'], photoConsent: 'care-only' },
-        { id: 'pt-demo-003', initials: 'JP', preferredName: 'João', stage: 'Day 7 follow-up', nextAction: 'Upload donor and recipient photos', riskChips: [], photoConsent: 'care-only' }
+        { id: 'pt-demo-003', initials: 'JP', preferredName: 'João', stage: 'Day 7 follow-up', nextAction: 'Upload donor and recipient photos', riskChips: [], photoConsent: 'care-only' },
+        { id: 'pt-sim-001', initials: 'LP', preferredName: 'Luis Pereira', stage: 'Simulation review', nextAction: 'AI simulator — review 3 alternative looks', riskChips: ['None'], photoConsent: 'care-only' }
       ],
       visualizations: [],
       auditEvents: []

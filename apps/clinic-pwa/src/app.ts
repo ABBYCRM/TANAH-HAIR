@@ -44,11 +44,26 @@ function loginView() {
         <h1>TANAH-HAIR</h1>
         <p class="subtle">Hair-transplant planning, procedure operations and patient journey.</p>
         <form id="login-form" class="stack">
-          <label>Email<input name="email" type="email" value="admin@tanah.hair" autocomplete="username" required></label>
-          <label>Password<input name="password" type="password" value="1234" autocomplete="current-password" required></label>
+          <label>Email<input name="email" type="email" placeholder="you@tanah.hair" autocomplete="username" required></label>
+          <label>Password<input name="password" type="password" placeholder="••••" autocomplete="current-password" required></label>
           <button class="primary" type="submit">Enter clinical workspace</button>
           <p id="login-error" class="form-error" role="alert"></p>
         </form>
+        <div class="login-demo">
+          <p class="eyebrow" style="margin:0 0 6px;">Demo accounts (password: 1234)</p>
+          <button type="button" class="demo-account" data-email="admin@tanah.hair" data-name="Administrator">
+            <strong>admin@tanah.hair</strong>
+            <span>Full access · Gemini settings</span>
+          </button>
+          <button type="button" class="demo-account" data-email="juliana@tanah.hair" data-name="Dra. Juliana Ribeiro">
+            <strong>juliana@tanah.hair</strong>
+            <span>Clinician · simulator & planning</span>
+          </button>
+          <button type="button" class="demo-account" data-email="assistant@tanah.hair" data-name="Care assistant">
+            <strong>assistant@tanah.hair</strong>
+            <span>Care assistant · patient queue</span>
+          </button>
+        </div>
         <div class="safety-note mt-16">
           <strong>Clinical boundary</strong>
           <span>No autonomous diagnosis, treatment recommendation or guaranteed outcome.</span>
@@ -56,6 +71,16 @@ function loginView() {
       </section>
     </main>
   `;
+
+  // Pre-fill credentials when a demo account chip is clicked
+  document.querySelectorAll<HTMLButtonElement>('.demo-account').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const form = document.querySelector<HTMLFormElement>('#login-form')!;
+      (form.elements.namedItem('email') as HTMLInputElement).value = btn.dataset.email || '';
+      (form.elements.namedItem('password') as HTMLInputElement).value = '1234';
+      (form.elements.namedItem('email') as HTMLInputElement).focus();
+    });
+  });
   document.querySelector<HTMLFormElement>('#login-form')!.addEventListener('submit', async event => {
     event.preventDefault();
     const formElement = event.currentTarget as HTMLFormElement;
@@ -74,7 +99,7 @@ const navItems: [string, string, string][] = [
   ['patients', 'Patients', '◉'],
   ['planning', 'Hairline Lab', '⌁'],
   ['procedures', 'Procedure Board', '▦'],
-  ['visualization', 'Hair Simulator', '✦'],
+  ['visualization', 'Image Simulator', '✦'],
   ['settings', 'Settings', '⚙']
 ];
 
@@ -409,10 +434,11 @@ function proceduresView() {
 }
 
 async function visualizationView() {
-  // Photo-based hair-transplant simulator. The bundled demo photo is the
-  // base; the user adjusts hairline, density, zone, color and length and
-  // the result is a composite SVG with a permanent "SIMULAÇÃO HIPOTÉTICA"
-  // watermark. No external API, no third-party calls — works every time.
+  // Spec-aligned hair-transplant image simulator (HairPath §3 visual).
+  // Photo-based parametric overlay; preserves face/skin/age/lighting/background
+  // by construction. Bundled demo photo (no real patient data). Permanent
+  // "HYPOTHETICAL VISUALIZATION — NOT A PREDICTION OR GUARANTEE OF RESULTS"
+  // watermark on every render.
   shell(`
     <div class="simulator-layout">
       <article class="instrument-panel sim-source">
@@ -426,7 +452,7 @@ async function visualizationView() {
       <article class="instrument-panel sim-target">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">AFTER · SIMULAÇÃO</p>
+            <p class="eyebrow">AFTER · HYPOTHETICAL</p>
             <h2>Restored hairline preview</h2>
           </div>
           <span id="sim-summary" class="chip muted">Awaiting render</span>
@@ -439,59 +465,140 @@ async function visualizationView() {
         </div>
         <div class="safety-note mt-8">
           <strong>Hard boundary</strong>
-          <span>Synthetic concept only. No patient photograph upload, diagnosis, prediction or guaranteed outcome.</span>
+          <span>Synthetic concept only. Identity, skin tone, age, head shape, lighting and background are preserved. No patient photograph upload. No diagnosis, prediction or guaranteed outcome.</span>
         </div>
       </article>
       <article class="instrument-panel sim-controls">
         <p class="eyebrow">PARAMETERS</p>
         <h2 class="section-h2-tight">Adjust the simulation</h2>
         <form id="sim-form" class="stack">
-          <label>Hairline shape
-            <select name="hairline">
-              <option value="conservative">Mature conservative</option>
-              <option value="balanced" selected>Balanced natural</option>
-              <option value="restorative">Restorative youthful</option>
-              <option value="feminine">Feminine rounded</option>
-            </select>
-          </label>
-          <label>Coverage zone
-            <select name="zone">
-              <option value="frontal">Frontal band</option>
-              <option value="midscalp">Frontal + midscalp</option>
-              <option value="crown">Frontal + crown</option>
-              <option value="full" selected>Full scalp</option>
-              <option value="temples">Temples + frontal</option>
-            </select>
-          </label>
-          <label>Density
-            <input type="range" name="density" min="0" max="1" step="0.05" value="0.65"/>
-            <small>Visual hair count (no clinical graft estimate).</small>
-          </label>
-          <label>Length
-            <select name="length">
-              <option value="buzz">Buzz (3 mm)</option>
-              <option value="short" selected>Short (15 mm)</option>
-              <option value="medium">Medium (40 mm)</option>
-              <option value="long">Long (80 mm)</option>
-            </select>
-          </label>
-          <label>Hair color
-            <select name="color">
-              <option value="black">Black</option>
-              <option value="darkBrown" selected>Dark brown</option>
-              <option value="mediumBrown">Medium brown</option>
-              <option value="lightBrown">Light brown</option>
-              <option value="blonde">Blonde</option>
-              <option value="saltPepper">Salt &amp; pepper</option>
-            </select>
-          </label>
+          <div class="form-grid-2">
+            <label>Hairline shape
+              <select name="hairline">
+                <option value="conservative">Mature conservative</option>
+                <option value="balanced" selected>Balanced natural</option>
+                <option value="restorative">Restorative youthful</option>
+                <option value="feminine">Feminine rounded</option>
+              </select>
+            </label>
+            <label>Coverage zone
+              <select name="zone">
+                <option value="frontal">Frontal band</option>
+                <option value="midscalp">Frontal + midscalp</option>
+                <option value="crown">Frontal + crown</option>
+                <option value="full" selected>Full scalp</option>
+                <option value="temples">Temples + frontal</option>
+              </select>
+            </label>
+            <label>Density
+              <input type="range" name="density" min="0" max="1" step="0.05" value="0.65"/>
+              <small>Visual hair count (no clinical graft estimate).</small>
+            </label>
+            <label>Length
+              <select name="length">
+                <option value="buzz">Buzz (3 mm)</option>
+                <option value="short" selected>Short (15 mm)</option>
+                <option value="medium">Medium (40 mm)</option>
+                <option value="long">Long (80 mm)</option>
+              </select>
+            </label>
+            <label>Hair color
+              <select name="color">
+                <option value="black">Black</option>
+                <option value="darkBrown" selected>Dark brown</option>
+                <option value="mediumBrown">Medium brown</option>
+                <option value="lightBrown">Light brown</option>
+                <option value="blonde">Blonde</option>
+                <option value="saltPepper">Salt &amp; pepper</option>
+              </select>
+            </label>
+            <label>Curl / texture
+              <select name="curl">
+                <option value="straight" selected>Straight</option>
+                <option value="slight">Slight wave</option>
+                <option value="wavy">Wavy</option>
+                <option value="curly">Curly / coily</option>
+              </select>
+            </label>
+            <label>Fullness
+              <select name="fullness">
+                <option value="conservative">Conservative</option>
+                <option value="moderate" selected>Moderate</option>
+                <option value="fuller">Fuller density</option>
+              </select>
+            </label>
+            <label>Technique
+              <select name="technique">
+                <option value="fue" selected>FUE</option>
+                <option value="fut">FUT</option>
+                <option value="dhi">DHI</option>
+              </select>
+            </label>
+            <label>Sessions
+              <select name="sessions">
+                <option value="single" selected>Single session</option>
+                <option value="multi">Multi-session</option>
+              </select>
+            </label>
+            <label>Graft scenario
+              <select name="graftScenario">
+                <option value="light">Light (1,200–1,800)</option>
+                <option value="moderate" selected>Moderate (1,800–2,500)</option>
+                <option value="restorative">Restorative (2,500–3,400)</option>
+                <option value="extensive">Extensive (3,400–5,000+, multi)</option>
+              </select>
+            </label>
+          </div>
           <div class="button-row">
             <button class="primary" type="submit" id="sim-render">Render</button>
             <button class="secondary" type="button" id="sim-variants">3 alternatives</button>
+            <button class="secondary" type="button" id="sim-multi">Multi-view</button>
           </div>
         </form>
       </article>
     </div>
+    <article class="instrument-panel mt-20">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">CASE CONTEXT</p>
+          <h2>Standardized photo set (6 views)</h2>
+        </div>
+        <span class="chip muted">1 of 6 attached</span>
+      </div>
+      <div class="view-availability" id="sim-view-grid">
+        <button class="view-slot attached" data-view="front">
+          <span class="view-thumb"><img src="/api/simulator/base-image" alt="Front view"/></span>
+          <strong>FRONTAL</strong>
+          <span>Attached</span>
+        </button>
+        <button class="view-slot" data-view="left" disabled>
+          <span class="view-thumb">＋</span>
+          <strong>LEFT LATERAL</strong>
+          <span>Not attached</span>
+        </button>
+        <button class="view-slot" data-view="right" disabled>
+          <span class="view-thumb">＋</span>
+          <strong>RIGHT LATERAL</strong>
+          <span>Not attached</span>
+        </button>
+        <button class="view-slot" data-view="top" disabled>
+          <span class="view-thumb">＋</span>
+          <strong>TOP (VERTEX)</strong>
+          <span>Not attached</span>
+        </button>
+        <button class="view-slot" data-view="crown" disabled>
+          <span class="view-thumb">＋</span>
+          <strong>CROWN (DONOR)</strong>
+          <span>Not attached</span>
+        </button>
+        <button class="view-slot" data-view="back" disabled>
+          <span class="view-thumb">＋</span>
+          <strong>POSTERIOR</strong>
+          <span>Not attached</span>
+        </button>
+      </div>
+      <p class="muted mt-8">The bundled demo has only the frontal view attached. In a real case, intake photos populate the other 5 slots and the simulator renders all perspectives with the same parameters — synchronized before/after across the standardized set.</p>
+    </article>
     <article class="instrument-panel mt-20 sim-variants-hidden" id="sim-variants-panel">
       <div class="section-heading">
         <div>
@@ -502,7 +609,17 @@ async function visualizationView() {
       </div>
       <div class="variant-grid" id="sim-variants-grid"></div>
     </article>
-  `, 'Hair Simulator', 'Photo-based hairline & density simulator. Always-on, no API dependency.');
+    <article class="instrument-panel mt-20 sim-variants-hidden" id="sim-multi-panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">SYNCHRONIZED MULTI-VIEW</p>
+          <h2>Same parameters across all attached views</h2>
+        </div>
+        <button class="secondary" id="sim-multi-close">Hide</button>
+      </div>
+      <div class="multi-view-grid" id="sim-multi-grid"></div>
+    </article>
+  `, 'Hair Transplant Image Simulator', 'Visualization tool. Hypothetical concepts only — not a prediction or guarantee of results.');
   await renderSimulatorView();
 }
 
@@ -518,10 +635,10 @@ async function renderSimulatorView() {
       const result = await api<any>('/simulator/apply', { method: 'POST', body: JSON.stringify(body) });
       const wrap = document.querySelector<HTMLElement>('#sim-after-wrap')!;
       wrap.classList.remove('visual-placeholder');
-      wrap.innerHTML = `<img src="${result.outputDataUrl}" alt="Simulated hairline render"><p class="muted">${escapeHtml(result.hairline)} · ${escapeHtml(result.length)} · ${escapeHtml(result.color)} · graft estimate ${result.grafts}</p>`;
+      wrap.innerHTML = `<img src="${result.outputDataUrl}" alt="Simulated hairline render"><p class="muted">${escapeHtml(result.hairlineLabel)} · ${escapeHtml(result.lengthLabel)} · ${escapeHtml(result.colorLabel)} · ${escapeHtml(result.curlLabel)} · ${escapeHtml(result.techniqueLabel)} · ${escapeHtml(result.sessionsLabel)} · ${result.grafts} grafts (${escapeHtml(result.graftRange)})</p>`;
       const sum = document.querySelector<HTMLElement>('#sim-summary')!;
       sum.className = 'chip';
-      sum.textContent = `${result.grafts} grafts · ${result.hairline}`;
+      sum.textContent = `${result.grafts} grafts · ${result.hairlineLabel}`;
     } catch (error) { toast((error as Error).message, 'error'); }
     finally { button.disabled = false; button.textContent = 'Render'; }
   });
@@ -540,7 +657,7 @@ async function renderSimulatorView() {
           <img src="${v.outputDataUrl}" alt="${escapeHtml(v.hairline)} variant"/>
           <figcaption>
             <strong>${escapeHtml(v.hairline)}</strong>
-            <span>${v.grafts} grafts · ${escapeHtml(v.length)} · ${escapeHtml(v.color)}</span>
+            <span>${v.grafts} grafts · ${escapeHtml(v.lengthLabel)} · ${escapeHtml(v.colorLabel)} · ${escapeHtml(v.techniqueLabel)}</span>
           </figcaption>
         </figure>
       `).join('');
@@ -550,8 +667,36 @@ async function renderSimulatorView() {
     finally { button.disabled = false; button.textContent = '3 alternatives'; }
   });
 
+  // Multi-view handler
+  document.querySelector<HTMLButtonElement>('#sim-multi')?.addEventListener('click', async event => {
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true; button.textContent = 'Rendering all views…';
+    try {
+      const form = document.querySelector<HTMLFormElement>('#sim-form')!;
+      const body = Object.fromEntries(new FormData(form));
+      const result = await api<any>('/simulator/multi-view', { method: 'POST', body: JSON.stringify(body) });
+      const grid = document.querySelector<HTMLElement>('#sim-multi-grid')!;
+      grid.innerHTML = result.renders.map((v: any) => `
+        <figure class="variant-card">
+          <img src="${v.outputDataUrl}" alt="${escapeHtml(v.view)} view"/>
+          <figcaption>
+            <strong>${escapeHtml(v.view.toUpperCase())}</strong>
+            <span>${escapeHtml(v.hairline)} · ${v.grafts} grafts · ${escapeHtml(v.technique)} · ${escapeHtml(v.sessions)}</span>
+          </figcaption>
+        </figure>
+      `).join('') || '<p class="muted">No views attached to this case yet.</p>';
+      const panel = document.querySelector<HTMLElement>('#sim-multi-panel')!;
+      panel.classList.remove('sim-variants-hidden');
+    } catch (error) { toast((error as Error).message, 'error'); }
+    finally { button.disabled = false; button.textContent = 'Multi-view'; }
+  });
+
   document.querySelector<HTMLButtonElement>('#sim-variants-close')?.addEventListener('click', () => {
     const panel = document.querySelector<HTMLElement>('#sim-variants-panel')!;
+    panel.classList.add('sim-variants-hidden');
+  });
+  document.querySelector<HTMLButtonElement>('#sim-multi-close')?.addEventListener('click', () => {
+    const panel = document.querySelector<HTMLElement>('#sim-multi-panel')!;
     panel.classList.add('sim-variants-hidden');
   });
 }

@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { cookie, parseCookies, readJson, sendJson, sendProblem, serveStatic } from './http.mjs';
 import { decryptSecret, encryptSecret, randomId, signToken, verifyPassword, verifyToken } from './security.mjs';
 import { GEMINI_MODELS, generateGeminiVisualization, publicGeminiSettings, testGeminiConnection } from './gemini.mjs';
-import { COVERAGE_ZONES, HAIRLINE_PRESETS, renderSimulation, renderVariants, renderPhotoSimulation, renderPhotoVariants, DEMO_SCALP } from './simulator.mjs';
+import { COVERAGE_ZONES, HAIRLINE_PRESETS, TECHNIQUE_PRESETS, SESSION_PRESETS, CURL_PRESETS, FULLNESS_PRESETS, GRAFT_SCENARIOS, VIEW_CATALOG, BUNDLED_DEMO, getAvailableViews, renderSimulation, renderVariants, renderPhotoSimulation, renderPhotoVariants, DEMO_SCALP } from './simulator.mjs';
 import { readFile } from 'node:fs/promises';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -238,7 +238,13 @@ export function createHandler({ store, sessionSecret, masterKey, secureCookies =
       if (req.method === 'GET' && url.pathname === '/api/simulator/presets') {
         return sendJson(res, 200, {
           hairlines: Object.values(HAIRLINE_PRESETS).map(p => ({ id: p.id, label: p.label, description: p.description })),
-          zones: Object.values(COVERAGE_ZONES).map(z => ({ id: z.id, label: z.label, grafts: z.grafts }))
+          zones: Object.values(COVERAGE_ZONES).map(z => ({ id: z.id, label: z.label, grafts: z.grafts })),
+          techniques: Object.values(TECHNIQUE_PRESETS).map(t => ({ id: t.id, label: t.label, note: t.note })),
+          sessions: Object.values(SESSION_PRESETS).map(s => ({ id: s.id, label: s.label, note: s.note })),
+          curls: Object.values(CURL_PRESETS).map(c => ({ id: c.id, label: c.label })),
+          fullnesses: Object.values(FULLNESS_PRESETS).map(f => ({ id: f.id, label: f.label, note: f.note })),
+          graftScenarios: Object.values(GRAFT_SCENARIOS).map(g => ({ id: g.id, label: g.label, range: g.range, session: g.session })),
+          views: VIEW_CATALOG.map(v => ({ id: v.id, label: v.label, description: v.description }))
         });
       }
 
@@ -295,7 +301,20 @@ export function createHandler({ store, sessionSecret, masterKey, secureCookies =
           width: DEMO_SCALP.width,
           height: DEMO_SCALP.height,
           description: 'Synthetic demo patient (Shutterstock-style balding male). No real patient data.',
-          attribution: 'Bundled with the repository; not a real patient.'
+          attribution: 'Bundled with the repository; not a real patient.',
+          availableViews: getAvailableViews(),
+          bundled: true
+        });
+      }
+
+      // Returns the 6-view catalog and which views have a photo attached.
+      if (req.method === 'GET' && url.pathname === '/api/simulator/case-photos') {
+        const auth = requireSession(req, res, ctx); if (!auth) return;
+        const caseId = url.searchParams.get('caseId') || 'demo-001';
+        return sendJson(res, 200, {
+          caseId,
+          views: getAvailableViews(),
+          bundled: true
         });
       }
 
@@ -308,7 +327,14 @@ export function createHandler({ store, sessionSecret, masterKey, secureCookies =
           zone: COVERAGE_ZONES[body.zone] ? body.zone : 'full',
           density: Math.max(0, Math.min(1, Number(body.density) || 0.6)),
           length: ['buzz','short','medium','long'].includes(body.length) ? body.length : 'short',
-          color: ['black','darkBrown','mediumBrown','lightBrown','blonde','saltPepper'].includes(body.color) ? body.color : 'darkBrown'
+          color: ['black','darkBrown','mediumBrown','lightBrown','blonde','saltPepper'].includes(body.color) ? body.color : 'darkBrown',
+          curl: CURL_PRESETS[body.curl] ? body.curl : 'straight',
+          fullness: FULLNESS_PRESETS[body.fullness] ? body.fullness : 'moderate',
+          technique: TECHNIQUE_PRESETS[body.technique] ? body.technique : 'fue',
+          sessions: SESSION_PRESETS[body.sessions] ? body.sessions : 'single',
+          graftScenario: GRAFT_SCENARIOS[body.graftScenario] ? body.graftScenario : 'moderate',
+          view: VIEW_CATALOG.some(v => v.id === body.view) ? body.view : 'front',
+          caseId: typeof body.caseId === 'string' ? body.caseId : 'demo-001'
         };
         const seed = Number.isInteger(body.seed) ? body.seed : undefined;
         let photoBase64 = null;
@@ -317,7 +343,7 @@ export function createHandler({ store, sessionSecret, masterKey, secureCookies =
           photoBase64 = buf.toString('base64');
         } catch {}
         const artifact = renderPhotoSimulation({ ...safe, photoBase64, seed });
-        await audit(store, { action: 'simulator.photo_applied', actorUserId: auth.user.id, hairline: safe.hairline, zone: safe.zone, density: safe.density, length: safe.length, color: safe.color, correlationId: res.correlationId });
+        await audit(store, { action: 'simulator.photo_applied', actorUserId: auth.user.id, hairline: safe.hairline, zone: safe.zone, density: safe.density, length: safe.length, color: safe.color, technique: safe.technique, sessions: safe.sessions, curl: safe.curl, fullness: safe.fullness, view: safe.view, caseId: safe.caseId, correlationId: res.correlationId });
         return sendJson(res, 201, artifact);
       }
 
@@ -329,7 +355,13 @@ export function createHandler({ store, sessionSecret, masterKey, secureCookies =
           zone: COVERAGE_ZONES[body.zone] ? body.zone : 'full',
           density: Math.max(0, Math.min(1, Number(body.density) || 0.6)),
           length: ['buzz','short','medium','long'].includes(body.length) ? body.length : 'short',
-          color: ['black','darkBrown','mediumBrown','lightBrown','blonde','saltPepper'].includes(body.color) ? body.color : 'darkBrown'
+          color: ['black','darkBrown','mediumBrown','lightBrown','blonde','saltPepper'].includes(body.color) ? body.color : 'darkBrown',
+          curl: CURL_PRESETS[body.curl] ? body.curl : 'straight',
+          fullness: FULLNESS_PRESETS[body.fullness] ? body.fullness : 'moderate',
+          technique: TECHNIQUE_PRESETS[body.technique] ? body.technique : 'fue',
+          sessions: SESSION_PRESETS[body.sessions] ? body.sessions : 'single',
+          view: VIEW_CATALOG.some(v => v.id === body.view) ? body.view : 'front',
+          caseId: typeof body.caseId === 'string' ? body.caseId : 'demo-001'
         };
         let photoBase64 = null;
         try {
@@ -337,8 +369,40 @@ export function createHandler({ store, sessionSecret, masterKey, secureCookies =
           photoBase64 = buf.toString('base64');
         } catch {}
         const artifacts = renderPhotoVariants({ ...safe, photoBase64 });
-        await audit(store, { action: 'simulator.photo_variants', actorUserId: auth.user.id, count: artifacts.length, correlationId: res.correlationId });
-        return sendJson(res, 200, { variants: artifacts, baseImage: `/api/simulator/base-image` });
+        await audit(store, { action: 'simulator.photo_variants', actorUserId: auth.user.id, count: artifacts.length, view: safe.view, caseId: safe.caseId, correlationId: res.correlationId });
+        return sendJson(res, 200, { variants: artifacts, baseImage: `/api/simulator/base-image`, view: safe.view, caseId: safe.caseId });
+      }
+
+      // Multi-view: render the same parameters on every available view.
+      // For the bundled demo, only the FRONT view is available; for a real
+      // case, the patient's intake photos would be added and all 6 would
+      // render in parallel. The UI shows one view at a time; this endpoint
+      // powers the "synchronized before/after across perspectives" feature.
+      if (req.method === 'POST' && url.pathname === '/api/simulator/multi-view') {
+        const auth = requireSession(req, res, ctx); if (!auth) return;
+        if (!requireCsrf(req, res, auth)) return;
+        const body = await readJson(req).catch(() => ({}));
+        const safe = {
+          hairline: HAIRLINE_PRESETS[body.hairline] ? body.hairline : 'balanced',
+          zone: COVERAGE_ZONES[body.zone] ? body.zone : 'full',
+          density: Math.max(0, Math.min(1, Number(body.density) || 0.6)),
+          length: ['buzz','short','medium','long'].includes(body.length) ? body.length : 'short',
+          color: ['black','darkBrown','mediumBrown','lightBrown','blonde','saltPepper'].includes(body.color) ? body.color : 'darkBrown',
+          curl: CURL_PRESETS[body.curl] ? body.curl : 'straight',
+          fullness: FULLNESS_PRESETS[body.fullness] ? body.fullness : 'moderate',
+          technique: TECHNIQUE_PRESETS[body.technique] ? body.technique : 'fue',
+          sessions: SESSION_PRESETS[body.sessions] ? body.sessions : 'single',
+          caseId: typeof body.caseId === 'string' ? body.caseId : 'demo-001'
+        };
+        let photoBase64 = null;
+        try {
+          const buf = await readFile(path.join(assetRoot, 'sample-patient.webp'));
+          photoBase64 = buf.toString('base64');
+        } catch {}
+        const available = getAvailableViews().filter(v => v.available);
+        const renders = available.map(v => renderPhotoSimulation({ ...safe, photoBase64, view: v.id }));
+        await audit(store, { action: 'simulator.multi_view', actorUserId: auth.user.id, count: renders.length, caseId: safe.caseId, correlationId: res.correlationId });
+        return sendJson(res, 200, { renders, availableViews: available.map(v => v.id), baseImage: `/api/simulator/base-image`, caseId: safe.caseId });
       }
 
       if (url.pathname === '/') {

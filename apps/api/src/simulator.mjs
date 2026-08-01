@@ -85,6 +85,71 @@ export const SKIN_TONES = {
   deep: { id: 'deep', base: '#8A5A3B', shade: '#6B4028', blush: '#9C5A45', lip: '#6B3528' }
 };
 
+// ---------- New spec-aligned presets (HairPath §3 visual) ----------
+
+export const TECHNIQUE_PRESETS = {
+  fue: { id: 'fue', label: 'FUE (Follicular Unit Extraction)', note: 'No linear scar; scattered punch extractions.' },
+  fut: { id: 'fut', label: 'FUT (Strip)', note: 'Linear donor scar; higher single-session yield.' },
+  dhi: { id: 'dhi', label: 'DHI (Direct Hair Implantation)', note: 'Implanter pen; higher density per cm².' }
+};
+
+export const SESSION_PRESETS = {
+  single: { id: 'single', label: 'Single session', note: 'One procedure, typical cap by zone.' },
+  multi:  { id: 'multi',  label: 'Multi-session', note: 'Two or more sessions; staged for max density.' }
+};
+
+export const CURL_PRESETS = {
+  straight: { id: 'straight', label: 'Straight',  curl: 0, wave: 0 },
+  slight:   { id: 'slight',   label: 'Slight wave', curl: 0.15, wave: 0.4 },
+  wavy:     { id: 'wavy',     label: 'Wavy',      curl: 0.3,  wave: 0.8 },
+  curly:    { id: 'curly',    label: 'Curly / coily', curl: 0.55, wave: 1.4 }
+};
+
+export const FULLNESS_PRESETS = {
+  conservative: { id: 'conservative', label: 'Conservative', densityMul: 0.6,  note: 'Mature restraint.' },
+  moderate:     { id: 'moderate',     label: 'Moderate',     densityMul: 0.8,  note: 'Most common in clinic.' },
+  fuller:       { id: 'fuller',       label: 'Fuller density', densityMul: 1.0,  note: 'Higher graft count per cm².' }
+};
+
+export const GRAFT_SCENARIOS = {
+  light:     { id: 'light',     label: 'Light',     range: '1,200 - 1,800', session: 'Single' },
+  moderate:  { id: 'moderate',  label: 'Moderate',  range: '1,800 - 2,500', session: 'Single' },
+  restorative: { id: 'restorative', label: 'Restorative', range: '2,500 - 3,400', session: 'Single' },
+  extensive: { id: 'extensive', label: 'Extensive (multi-session)', range: '3,400 - 5,000+', session: 'Multi' }
+};
+
+// ---------- 6-view catalog ----------
+// The bundled demo has only the FRONT view. The other 5 view slots are
+// reserved for real cases where the patient (or the intake assistant)
+// has uploaded the full set. The framework is the same; only the
+// base asset differs.
+export const VIEW_CATALOG = [
+  { id: 'front',  label: 'Frontal',        description: 'Standardized front view, neutral expression.' },
+  { id: 'left',   label: 'Left lateral',   description: 'Profile from the patient\'s left side.' },
+  { id: 'right',  label: 'Right lateral',  description: 'Profile from the patient\'s right side.' },
+  { id: 'top',    label: 'Top (vertex)',   description: 'Top-down view of the crown and midscalp.' },
+  { id: 'crown',  label: 'Crown (donor)',  description: 'Donor-area reference at the back of the head.' },
+  { id: 'back',   label: 'Posterior',      description: 'Back-of-head reference for donor density.' }
+];
+
+export const BUNDLED_DEMO = {
+  id: 'demo-001',
+  description: 'Synthetic demo patient (Shutterstock-licensed stock). No real patient data.',
+  attribution: 'stock sample · 238551875',
+  views: {
+    front: { assetId: 'sample-patient', width: 347, height: 280, available: true }
+    // Other views intentionally left undefined for the bundled demo.
+    // A real case will populate these from uploaded patient photos.
+  }
+};
+
+export function getAvailableViews(patient = BUNDLED_DEMO) {
+  return VIEW_CATALOG.map(v => ({
+    ...v,
+    available: Boolean(patient.views && patient.views[v.id])
+  }));
+}
+
 // ---------- Geometry ----------
 
 // The head is a 720x720 canvas. Face is in the lower half. Scalp is in the
@@ -259,8 +324,8 @@ function renderHair({ preset, zone, density, length, color, seed, rng }) {
 
 function watermark(label) {
   return `<rect x="0" y="660" width="720" height="60" fill="#0F172A" fill-opacity="0.92" />
-    <text x="360" y="687" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="18" font-weight="700" fill="#fff" letter-spacing="1.2">SIMULAÇÃO HIPOTÉTICA</text>
-    <text x="360" y="704" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" fill="#5EEAD4" letter-spacing="0.6">NÃO É PREVISÃO DE RESULTADO · TANAH-HAIR</text>`;
+    <text x="360" y="687" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="18" font-weight="700" fill="#fff" letter-spacing="1.2">HYPOTHETICAL VISUALIZATION</text>
+    <text x="360" y="704" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" fill="#5EEAD4" letter-spacing="0.6">NOT A PREDICTION OR GUARANTEE OF RESULTS · TANAH-HAIR</text>`;
 }
 
 // ---------- Main render ----------
@@ -288,7 +353,7 @@ export function renderSimulation({
     seed, rng
   });
 
-  const wm = label || 'SIMULAÇÃO HIPOTÉTICA - NÃO É PREVISÃO DE RESULTADO';
+  const wm = label || 'HYPOTHETICAL VISUALIZATION - NOT A PREDICTION OR GUARANTEE OF RESULTS';
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 720" width="720" height="720">
   <defs>
@@ -436,15 +501,18 @@ function simulatedZonePath(preset, density) {
  * Draws hair strands in the simulated zone. Same procedural approach as the
  * avatar version but calibrated for a 347x280 coordinate system.
  */
-function renderPhotoHair(preset, zone, density, length, color, rng) {
+function renderPhotoHair(preset, zone, density, length, color, rng, opts = {}) {
   const len = HAIR_LENGTHS[length] || HAIR_LENGTHS.short;
   const col = HAIR_COLORS[color] || HAIR_COLORS.darkBrown;
+  const curl = (opts.curl && opts.curl.curl) || 0;
+  const wave = (opts.curl && opts.curl.wave) || 0;
+  const densityMul = (opts.fullness && opts.fullness.densityMul) || 1.0;
   const strands = [];
   const h = shiftedHairline(preset, density);
   const minX = 92, maxX = 254;
   const baseY = h.center[1] - 4;     // just behind the new hairline
   const maxY = 14;                    // top of scalp
-  const targetCount = Math.floor(80 + density * 820); // 80–900 strands
+  const targetCount = Math.floor((80 + density * 820) * densityMul); // 80–900 strands
   const gridN = Math.max(6, Math.round(Math.sqrt(targetCount * 1.8)));
   const cellW = (maxX - minX) / gridN;
   const cellH = (baseY - maxY) / gridN;
@@ -483,10 +551,19 @@ function renderPhotoHair(preset, zone, density, length, color, rng) {
       const rad = (angle - 90) * Math.PI / 180;
       const tipX = x + Math.cos(rad) * thisLen;
       const tipY = y + Math.sin(rad) * thisLen;
-      // Slight curve
-      const midX = (x + tipX) / 2 + (rng() - 0.5) * 1.5;
-      const midY = (y + tipY) / 2 + (rng() - 0.5) * 1.5;
-      const path = `M ${x.toFixed(2)} ${y.toFixed(2)} Q ${midX.toFixed(2)} ${midY.toFixed(2)} ${tipX.toFixed(2)} ${tipY.toFixed(2)}`;
+      // Slight curve + curl: shift the midpoint perpendicular to the strand
+      // direction by a curl amount, plus a wave jitter.
+      const perpX = -Math.sin(rad);
+      const perpY = Math.cos(rad);
+      const curlAmt = curl * (1 + rng() * 0.6);
+      const waveAmt = (rng() - 0.5) * wave;
+      const midX = (x + tipX) / 2 + perpX * curlAmt * 4 + (rng() - 0.5) * 1.5;
+      const midY = (y + tipY) / 2 + perpY * curlAmt * 4 + (rng() - 0.5) * 1.5 + waveAmt * 0.6;
+      // Curly strands use a control point further along the curl so the
+      // visible bend is larger.
+      const path = curl > 0.2
+        ? `M ${x.toFixed(2)} ${y.toFixed(2)} C ${(x + perpX * curlAmt * 6).toFixed(2)} ${(y + perpY * curlAmt * 6).toFixed(2)} ${(tipX - perpX * curlAmt * 2).toFixed(2)} ${(tipY - perpY * curlAmt * 2).toFixed(2)} ${tipX.toFixed(2)} ${tipY.toFixed(2)}`
+        : `M ${x.toFixed(2)} ${y.toFixed(2)} Q ${midX.toFixed(2)} ${midY.toFixed(2)} ${tipX.toFixed(2)} ${tipY.toFixed(2)}`;
       // Slightly more opaque and thicker so the strokes read at this scale.
       const opacity = 0.7 + rng() * 0.25;
       const strokeW = 0.5 + rng() * 0.4;
@@ -513,22 +590,39 @@ export function renderPhotoSimulation({
   density = 0.55,
   length = 'short',
   color = 'darkBrown',
+  curl = 'straight',
+  fullness = 'moderate',
+  technique = 'fue',
+  sessions = 'single',
+  graftScenario = 'moderate',
+  view = 'front',
+  caseId = 'demo-001',
   seed,
   label
 } = {}) {
   const preset = HAIRLINE_PRESETS[hairline] || HAIRLINE_PRESETS.balanced;
-  const rng = mulberry32((seed !== undefined ? seed : stringSeed(`${hairline}-${zone}-${density}-${length}-${color}`)) >>> 0);
+  const curlObj = CURL_PRESETS[curl] || CURL_PRESETS.straight;
+  const fullnessObj = FULLNESS_PRESETS[fullness] || FULLNESS_PRESETS.moderate;
+  const techniqueObj = TECHNIQUE_PRESETS[technique] || TECHNIQUE_PRESETS.fue;
+  const sessionObj = SESSION_PRESETS[sessions] || SESSION_PRESETS.single;
+  const graftObj = GRAFT_SCENARIOS[graftScenario] || GRAFT_SCENARIOS.moderate;
+  const effectiveDensity = Math.min(1, density * fullnessObj.densityMul);
+  const seedKey = `${hairline}-${zone}-${density}-${length}-${color}-${curl}-${fullness}-${view}`;
+  const rng = mulberry32((seed !== undefined ? seed : stringSeed(seedKey)) >>> 0);
   const id = randomId();
   const createdAt = new Date().toISOString();
   const grafts = COVERAGE_ZONES[zone]?.grafts || 2000;
   const h = shiftedHairline(preset, density);
-  const hair = renderPhotoHair(preset, zone, density, length, color, rng);
+  const hair = renderPhotoHair(preset, zone, density, length, color, rng, { curl: curlObj, fullness: fullnessObj });
   const zonePath = simulatedZonePath(preset, density);
-  const wm = label || 'SIMULAÇÃO HIPOTÉTICA - NÃO É PREVISÃO DE RESULTADO';
+  const wm = label || 'HYPOTHETICAL VISUALIZATION - NOT A PREDICTION OR GUARANTEE OF RESULTS';
   const col = HAIR_COLORS[color] || HAIR_COLORS.darkBrown;
 
   // Build the new hairline as a small Q-curve for visual reference
   const hairlinePath = `M ${h.leftTemple[0]} ${h.leftTemple[1]} Q ${h.center[0]} ${h.center[1] - 8} ${h.rightTemple[0]} ${h.rightTemple[1]}`;
+
+  // View label on top of the watermark so multi-view galleries are obvious.
+  const viewLabel = VIEW_CATALOG.find(v => v.id === view)?.label?.toUpperCase() || 'FRONTAL';
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${photoWidth} ${photoHeight}" width="${photoWidth}" height="${photoHeight}">
   <defs>
@@ -536,20 +630,25 @@ export function renderPhotoSimulation({
       <path d="${zonePath}"/>
     </clipPath>
   </defs>
-  <!-- original photo -->
+  <!-- original photo (identity, skin tone, age, lighting, background ALL preserved) -->
   ${photoBase64 ? `<image href="data:${photoMime};base64,${photoBase64}" x="0" y="0" width="${photoWidth}" height="${photoHeight}" preserveAspectRatio="xMidYMid slice"/>` : ''}
   <!-- subtle darken on the bald area so the hair reads on top of the skin tone -->
   <path d="${zonePath}" fill="#000" opacity="0.04" clip-path="url(#zoneClip)"/>
-  <!-- hair overlay -->
+  <!-- hair overlay (scalp region only) -->
   <g clip-path="url(#zoneClip)">
     ${hair}
   </g>
   <!-- hairline trace -->
   <path d="${hairlinePath}" fill="none" stroke="${col.stroke}" stroke-width="0.6" opacity="0.55"/>
-  <!-- watermark -->
+  <!-- view tag (top-right) -->
+  <g>
+    <rect x="${photoWidth - 56}" y="6" width="50" height="14" rx="3" fill="#0F172A" fill-opacity="0.78"/>
+    <text x="${photoWidth - 31}" y="16" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="7" font-weight="700" fill="#5EEAD4" letter-spacing="0.6">${viewLabel}</text>
+  </g>
+  <!-- watermark (spec-mandated) -->
   <rect x="0" y="${photoHeight - 26}" width="${photoWidth}" height="26" fill="#0F172A" fill-opacity="0.92"/>
-  <text x="${photoWidth / 2}" y="${photoHeight - 14}" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="700" fill="#fff" letter-spacing="0.6">SIMULAÇÃO HIPOTÉTICA</text>
-  <text x="${photoWidth / 2}" y="${photoHeight - 4}" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="6.5" fill="#5EEAD4" letter-spacing="0.4">NÃO É PREVISÃO DE RESULTADO · TANAH-HAIR</text>
+  <text x="${photoWidth / 2}" y="${photoHeight - 14}" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="700" fill="#fff" letter-spacing="0.6">HYPOTHETICAL VISUALIZATION</text>
+  <text x="${photoWidth / 2}" y="${photoHeight - 4}" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="6.5" fill="#5EEAD4" letter-spacing="0.4">NOT A PREDICTION OR GUARANTEE OF RESULTS · TANAH-HAIR</text>
 </svg>`;
 
   return {
@@ -559,13 +658,31 @@ export function renderPhotoSimulation({
     outputDataUrl: 'data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64'),
     width: photoWidth,
     height: photoHeight,
+    view,
+    caseId,
     hairline: preset.id,
+    hairlineLabel: preset.label,
     zone,
+    zoneLabel: COVERAGE_ZONES[zone]?.label || zone,
     density,
+    effectiveDensity,
     length,
+    lengthLabel: HAIR_LENGTHS[length]?.label || length,
     color,
+    colorLabel: HAIR_COLORS[color]?.label || color,
+    curl: curlObj.id,
+    curlLabel: curlObj.label,
+    fullness: fullnessObj.id,
+    fullnessLabel: fullnessObj.label,
+    technique: techniqueObj.id,
+    techniqueLabel: techniqueObj.label,
+    sessions: sessionObj.id,
+    sessionsLabel: sessionObj.label,
+    graftScenario: graftObj.id,
+    graftScenarioLabel: graftObj.label,
+    graftRange: graftObj.range,
     grafts,
-    seed: seed !== undefined ? seed : stringSeed(`${hairline}-${zone}-${density}-${length}-${color}`),
+    seed: seed !== undefined ? seed : stringSeed(seedKey),
     label: wm
   };
 }
