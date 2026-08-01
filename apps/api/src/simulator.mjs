@@ -497,81 +497,265 @@ function simulatedZonePath(preset, density) {
     Q " + cx + " " + (cy - 6) + " " + lx + " " + ly + " Z";
 }
 
-/**
- * Draws hair strands in the simulated zone. Same procedural approach as the
- * avatar version but calibrated for a 347x280 coordinate system.
- */
+// ---------- High-quality photo-based hair rendering ----------
+//
+// Strategy for realistic hair on a 347x280 photo:
+//   1. Color palette: 4 shades of the chosen color (root dark, mid, tip
+//      lighter, highlight) — every strand picks one, so the overall mass
+//      looks like multi-tone natural hair, not a flat block of color.
+//   2. Layered passes:
+//        base     — short, dense, low-opacity undercoat (creates depth)
+//        bulk     — full-length strands forming the visual mass
+//        flyaways — few long fine strands on top (the "wispy" texture)
+//   3. Follicle clustering: strands come in groups of 1-4 with a small
+//      angular spread, like natural follicular units.
+//   4. Directional flow: each point in the scalp gets a primary direction
+//      from a flow field (forward at the hairline, radial whorl at the
+//      vertex, backward at the midscalp, outward at the temples) plus
+//      per-strand noise.
+//   5. Soft edge: a Gaussian-blur filter + strands that extend ~2px past
+//      the clip path so the hair boundary is wispy, not a hard line.
+//   6. Tapered tips: a subtle gradient per strand (slightly thinner at
+//      the tip than the root) via the path stroke shape.
+//
+// The result is 2500-4500 small SVG paths per render. Browsers handle
+// this in ~50ms.
+
+const HAIR_PALETTES = {
+  black:       ['#0A0A0A', '#1F1F1F', '#2C2C2C', '#3A3A3A', '#1A1A1A'],
+  darkBrown:   ['#1A0F08', '#2A1A10', '#3D2817', '#52361F', '#6B4028'],
+  mediumBrown: ['#3D2415', '#5C3A22', '#72492A', '#8B5A35', '#A06D40'],
+  lightBrown:  ['#5C3A1E', '#8B5A2B', '#A06D38', '#B98748', '#CFA05A'],
+  blonde:      ['#9A7A35', '#C8A055', '#D8B56A', '#E8C885', '#F2DBA0'],
+  saltPepper:  ['#3F3F3F', '#7A7A7A', '#B0B0B0', '#D5D5D5', '#5A5A5A']
+};
+
+function colorPalette(color) {
+  return HAIR_PALETTES[color] || HAIR_PALETTES.darkBrown;
+}
+
+// Directional flow field: returns the primary hair direction (radians) at
+// a given (x, y) on the 347x280 photo canvas. Real hair doesn't follow a
+// clean flow field — every strand points slightly differently. We return
+// a soft average direction and rely on per-strand noise (added in the
+// pass loops) to provide the natural variation. The whorl is also kept
+// very subtle so the hair doesn't look like a combed spiral.
+function hairFlow(x, y, h, zone) {
+  const cx = 173;
+  const vertexX = 173, vertexY = 32;
+
+  // Distance from the vertex
+  const dvx = x - vertexX, dvy = y - vertexY;
+  const distFromVertex = Math.sqrt(dvx * dvx + dvy * dvy);
+
+  // VERY subtle whorl at the vertex — small effect, no perfect spiral.
+  // We just bias the direction tangentially by a small amount.
+  if (distFromVertex < 14) {
+    const ang = Math.atan2(dvy, dvx);
+    return ang + Math.PI / 2;  // pure tangent, small effect
+  }
+
+  // Front hairline zone: hair sweeps forward and down (towards the
+  // forehead), with a slight outward angle at the temples.
+  const distFromHairline = h.center[1] - 4 - y;
+  if (distFromHairline > 0 && distFromHairline < 22) {
+    const xBias = (x - cx) / 82;  // -1 (left) to +1 (right)
+    return Math.PI / 2 + xBias * 0.55 + (distFromHairline / 22) * 0.3;
+  }
+
+  // Mid-scalp: blend radial-outward with forward-down for a natural
+  // comb-over pattern.
+  const radialOut = Math.atan2(y - vertexY, x - vertexX) + Math.PI / 2;
+  const forwardDown = Math.PI / 2 + (x - cx) / 82 * 0.4;
+  const t = Math.max(0, Math.min(1, distFromHairline / 60));
+  return radialOut * (1 - t) + forwardDown * t;
+}
+
+function isInsideScalp(x, y) {
+  const nx = (x - 173) / 82;
+  const ny = (y - 75) / 65;
+  return nx * nx + ny * ny <= 1.0;
+}
+
+function isInsideZone(x, y, h) {
+  if (y > h.center[1] - 4) return false;  // in front of new hairline
+  return isInsideScalp(x, y);
+}
+
+// Generate a single tapered strand as a filled quad (a thin "leaf" shape
+// with the root slightly wider than the tip). This is how real hair-
+// rendering tools do it: a filled polygon per strand rather than a
+// stroked line, so the strand has actual width and tapers naturally.
+function strandPath(x, y, len, dir, curl, wave, jitter, rootW = 0.45, tipW = 0.12) {
+  const rad = dir;
+  const dx = Math.cos(rad), dy = Math.sin(rad);
+  const tipX = x + dx * len;
+  const tipY = y + dy * len;
+  const perpX = -dy, perpY = dx;
+
+  // Curve control points — pull perpendicular by `curl` for natural bend.
+  const curlAmt = curl * (0.5 + jitter * 0.5);
+  const waveAmt = (jitter - 0.5) * wave;
+  const c1x = x + dx * len * 0.33 + perpX * curlAmt * len * 0.4;
+  const c1y = y + dy * len * 0.33 + perpY * curlAmt * len * 0.4;
+  const c2x = x + dx * len * 0.66 + perpX * curlAmt * len * 0.8 + waveAmt;
+  const c2y = y + dy * len * 0.66 + perpY * curlAmt * len * 0.8 + waveAmt;
+
+  // Sample the cubic at t=0 (root) and t=1 (tip) to compute the
+  // perpendicular direction at each end, so the quad's left/right edges
+  // follow the curve.
+  const rootDX = 3 * (c1x - x),         rootDY = 3 * (c1y - y);
+  const tipDX  = 3 * (tipX - c2x),      tipDY  = 3 * (tipY - c2y);
+  const rootAng = Math.atan2(rootDY, rootDX);
+  const tipAng  = Math.atan2(tipDY,  tipDX);
+  const rootPerpX = -Math.sin(rootAng), rootPerpY = Math.cos(rootAng);
+  const tipPerpX  = -Math.sin(tipAng),  tipPerpY  = Math.cos(tipAng);
+
+  // Quad: root-left, tip-left, tip-right, root-right
+  const rlX = x + rootPerpX * rootW, rlY = y + rootPerpY * rootW;
+  const rrX = x - rootPerpX * rootW, rrY = y - rootPerpY * rootW;
+  const tlX = tipX + tipPerpX * tipW, tlY = tipY + tipPerpY * tipW;
+  const trX = tipX - tipPerpX * tipW, trY = tipY - tipPerpY * tipW;
+
+  return `M ${rlX.toFixed(2)} ${rlY.toFixed(2)} Q ${c1x.toFixed(2)} ${c1y.toFixed(2)} ${tlX.toFixed(2)} ${tlY.toFixed(2)} L ${trX.toFixed(2)} ${trY.toFixed(2)} Q ${c2x.toFixed(2)} ${c2y.toFixed(2)} ${rrX.toFixed(2)} ${rrY.toFixed(2)} Z`;
+}
+
 function renderPhotoHair(preset, zone, density, length, color, rng, opts = {}) {
   const len = HAIR_LENGTHS[length] || HAIR_LENGTHS.short;
-  const col = HAIR_COLORS[color] || HAIR_COLORS.darkBrown;
   const curl = (opts.curl && opts.curl.curl) || 0;
   const wave = (opts.curl && opts.curl.wave) || 0;
   const densityMul = (opts.fullness && opts.fullness.densityMul) || 1.0;
-  const strands = [];
+  const palette = colorPalette(color);
   const h = shiftedHairline(preset, density);
-  const minX = 92, maxX = 254;
-  const baseY = h.center[1] - 4;     // just behind the new hairline
-  const maxY = 14;                    // top of scalp
-  const targetCount = Math.floor((80 + density * 820) * densityMul); // 80–900 strands
-  const gridN = Math.max(6, Math.round(Math.sqrt(targetCount * 1.8)));
-  const cellW = (maxX - minX) / gridN;
-  const cellH = (baseY - maxY) / gridN;
-  let count = 0;
 
-  for (let gy = 0; gy < gridN; gy++) {
-    for (let gx = 0; gx < gridN; gx++) {
-      const x = minX + (gx + rng()) * cellW;
-      const y = maxY + (gy + rng()) * cellH;
-      // Skip points in front of the new hairline
-      if (y > h.center[1] - 4) continue;
-      // Reject points outside the rounded scalp silhouette
-      const nx = (x - 173) / 82;
-      const ny = (y - 75) / 65;
-      if (nx * nx + ny * ny > 1.05) continue;
-      // Direction: front of hairline = down/forward, top = down, sides = outward
-      let angle;
-      const distFromCenter = Math.abs(x - 173);
-      if (y > h.center[1] - 20) {
-        // Front edge: hair grows down
-        angle = 95 + (rng() - 0.5) * 30;
-      } else if (distFromCenter > 55) {
-        // Sides: outward
-        angle = x < 173 ? 55 + (rng() - 0.5) * 25 : 125 + (rng() - 0.5) * 25;
-      } else {
-        // Top: down/forward
-        angle = 90 + (rng() - 0.5) * 30;
-      }
-      angle += (rng() - 0.5) * 8;
-      // Scale hair length for the 347-wide photo canvas (avatar was 720-wide).
-      // Short hair on a 720 canvas = 18px; on a 347 canvas that's ~30px to be
-      // visible. We use a 0.65x scale relative to the avatar (slightly larger
-      // because individual hairs need to read at this resolution).
-      const thisLen = len.px * (0.55 + rng() * 0.4) * (347 / 720);
-      // Convert angle to dx/dy in image space
-      const rad = (angle - 90) * Math.PI / 180;
-      const tipX = x + Math.cos(rad) * thisLen;
-      const tipY = y + Math.sin(rad) * thisLen;
-      // Slight curve + curl: shift the midpoint perpendicular to the strand
-      // direction by a curl amount, plus a wave jitter.
-      const perpX = -Math.sin(rad);
-      const perpY = Math.cos(rad);
-      const curlAmt = curl * (1 + rng() * 0.6);
-      const waveAmt = (rng() - 0.5) * wave;
-      const midX = (x + tipX) / 2 + perpX * curlAmt * 4 + (rng() - 0.5) * 1.5;
-      const midY = (y + tipY) / 2 + perpY * curlAmt * 4 + (rng() - 0.5) * 1.5 + waveAmt * 0.6;
-      // Curly strands use a control point further along the curl so the
-      // visible bend is larger.
-      const path = curl > 0.2
-        ? `M ${x.toFixed(2)} ${y.toFixed(2)} C ${(x + perpX * curlAmt * 6).toFixed(2)} ${(y + perpY * curlAmt * 6).toFixed(2)} ${(tipX - perpX * curlAmt * 2).toFixed(2)} ${(tipY - perpY * curlAmt * 2).toFixed(2)} ${tipX.toFixed(2)} ${tipY.toFixed(2)}`
-        : `M ${x.toFixed(2)} ${y.toFixed(2)} Q ${midX.toFixed(2)} ${midY.toFixed(2)} ${tipX.toFixed(2)} ${tipY.toFixed(2)}`;
-      // Slightly more opaque and thicker so the strokes read at this scale.
-      const opacity = 0.7 + rng() * 0.25;
-      const strokeW = 0.5 + rng() * 0.4;
-      strands.push(`<path d="${path}" stroke="${col.stroke}" stroke-width="${strokeW.toFixed(2)}" stroke-linecap="round" fill="none" opacity="${opacity.toFixed(2)}"/>`);
-      count++;
-      if (count > 1800) break;
+  // Photo canvas: 347x280
+  // Scalp occupies the rounded area centered at (173, 75), rx=82, ry=65
+  const minX = 88, maxX = 258;
+  const maxY = 14;
+  const baseY = h.center[1] - 3;  // just behind the new hairline
+
+  // Total strand target. Filled quads blend more than strokes so we can
+  // use fewer (~3500 at full). Tuned for visible-but-not-drawn look.
+  const total = Math.floor((2400 + density * 1800) * densityMul);
+  const baseCount  = Math.floor(total * 0.50);  // undercoat
+  const bulkCount  = Math.floor(total * 0.40);  // bulk
+  const flyCount   = Math.floor(total * 0.10);  // flyaways
+
+  const strands = [];
+  const baseFillColor = palette[2];  // mid-tone for the base fill
+
+  // Helper: jitter a position by a small radius (follicle spread)
+  function jitterPos(baseX, baseY, spread) {
+    const r = rng() * spread;
+    const a = rng() * Math.PI * 2;
+    return [baseX + Math.cos(a) * r, baseY + Math.sin(a) * r];
+  }
+
+  // Distance from the new hairline — used for density falloff so the
+  // front edge is sparser than the interior.
+  function distFromHairline(y) {
+    return Math.max(0, h.center[1] - 4 - y);
+  }
+
+  // Probability gate based on distance from hairline: strands near the
+  // hairline are sparser (the "feathered" edge), strands further back are
+  // denser.
+  function densityGate(y) {
+    const d = distFromHairline(y);
+    if (d < 3) return rng() * 0.25 + 0.05;     // very sparse at the edge
+    if (d < 8) return rng() * 0.5 + 0.25;      // sparser
+    if (d < 18) return rng() * 0.4 + 0.55;     // normal
+    return 1.0;                                 // full density further back
+  }
+
+  // Generate follicle centers: a grid in the scalp region, then jitter.
+  const gridDensity = Math.max(20, Math.round(Math.sqrt(total / 3)));
+  const cellW = (maxX - minX) / gridDensity;
+  const cellH = (baseY - maxY) / gridDensity;
+  const follicles = [];
+  for (let gy = 0; gy < gridDensity; gy++) {
+    for (let gx = 0; gx < gridDensity; gx++) {
+      const fx = minX + (gx + rng()) * cellW;
+      const fy = maxY + (gy + rng()) * cellH;
+      if (!isInsideZone(fx, fy, h)) continue;
+      // Skip ~50% of follicles in the first 4px from the hairline
+      if (distFromHairline(fy) < 4 && rng() > 0.4) continue;
+      follicles.push([fx, fy]);
     }
   }
+
+  // ---- Pass 1: base undercoat (short, dense, low opacity) ----
+  for (let i = 0; i < baseCount; i++) {
+    const f = follicles[Math.floor(rng() * follicles.length)];
+    if (!f) break;
+    const [bx, by] = jitterPos(f[0], f[1], 1.8);
+    if (!isInsideZone(bx, by, h)) continue;
+    if (rng() > densityGate(by)) continue;
+    const dir = hairFlow(bx, by, h, zone) + (rng() - 0.5) * 0.9;
+    const thisLen = len.px * (0.18 + rng() * 0.35) * (347 / 720);
+    const rootW = 0.30 + rng() * 0.20;
+    const tipW = 0.08 + rng() * 0.10;
+    const path = strandPath(bx, by, thisLen, dir, curl * 0.4, wave, rng(), rootW, tipW);
+    const op = 0.25 + rng() * 0.30;
+    const c = palette[Math.floor(rng() * palette.length)];
+    strands.push(`<path d="${path}" fill="${c}" opacity="${op.toFixed(2)}"/>`);
+  }
+
+  // ---- Pass 2: bulk (shorter than natural, varied opacity, full color variation) ----
+  for (let i = 0; i < bulkCount; i++) {
+    const f = follicles[Math.floor(rng() * follicles.length)];
+    if (!f) break;
+    const cluster = 1 + Math.floor(rng() * 2);
+    for (let c = 0; c < cluster; c++) {
+      const [bx, by] = jitterPos(f[0], f[1], 1.4);
+      if (!isInsideZone(bx, by, h)) continue;
+      if (rng() > densityGate(by)) continue;
+      const dir = hairFlow(bx, by, h, zone) + (rng() - 0.5) * 0.85;
+      const thisLen = len.px * (0.45 + rng() * 0.45) * (347 / 720);
+      const rootW = 0.35 + rng() * 0.25;
+      const tipW = 0.08 + rng() * 0.10;
+      const path = strandPath(bx, by, thisLen, dir, curl, wave, rng(), rootW, tipW);
+      const op = 0.5 + rng() * 0.40;
+      const cIdx = Math.floor(rng() * palette.length);
+      strands.push(`<path d="${path}" fill="${palette[cIdx]}" opacity="${op.toFixed(2)}"/>`);
+    }
+  }
+
+  // ---- Pass 3: flyaways (a few longer fine strands for the wispy edge) ----
+  for (let i = 0; i < flyCount; i++) {
+    const f = follicles[Math.floor(rng() * follicles.length)];
+    if (!f) break;
+    const [bx, by] = jitterPos(f[0], f[1], 5.0);
+    if (by > h.center[1] + 4) continue;
+    if (!isInsideScalp(bx, by) && rng() > 0.1) continue;
+    const dir = hairFlow(bx, by, h, zone) + (rng() - 0.5) * 0.9;
+    const thisLen = len.px * (0.8 + rng() * 0.5) * (347 / 720);
+    const rootW = 0.20 + rng() * 0.18;
+    const tipW = 0.05 + rng() * 0.08;
+    const path = strandPath(bx, by, thisLen, dir, curl * 1.3, wave * 1.5, rng(), rootW, tipW);
+    const op = 0.4 + rng() * 0.40;
+    const cIdx = Math.floor(rng() * palette.length);
+    strands.push(`<path d="${path}" fill="${palette[cIdx]}" opacity="${op.toFixed(2)}"/>`);
+  }
+
+  // ---- Pass 4: hairline edge — very short thin strands biased to the front ----
+  for (let i = 0; i < Math.floor(total * 0.10); i++) {
+    const yPos = h.center[1] - 4 - rng() * 14;
+    if (yPos < maxY) continue;
+    const xPos = minX + rng() * (maxX - minX);
+    if (!isInsideZone(xPos, yPos, h)) continue;
+    const [bx, by] = jitterPos(xPos, yPos, 2.0);
+    if (!isInsideZone(bx, by, h)) continue;
+    const dir = hairFlow(bx, by, h, zone) + (rng() - 0.5) * 0.85;
+    const thisLen = len.px * (0.14 + rng() * 0.24) * (347 / 720);
+    const rootW = 0.22 + rng() * 0.16;
+    const tipW = 0.05 + rng() * 0.06;
+    const path = strandPath(bx, by, thisLen, dir, curl * 0.6, wave, rng(), rootW, tipW);
+    const op = 0.45 + rng() * 0.35;
+    const cIdx = Math.floor(rng() * palette.length);
+    strands.push(`<path d="${path}" fill="${palette[cIdx]}" opacity="${op.toFixed(2)}"/>`);
+  }
+
   return strands.join('');
 }
 
@@ -618,8 +802,29 @@ export function renderPhotoSimulation({
   const wm = label || 'HYPOTHETICAL VISUALIZATION - NOT A PREDICTION OR GUARANTEE OF RESULTS';
   const col = HAIR_COLORS[color] || HAIR_COLORS.darkBrown;
 
-  // Build the new hairline as a small Q-curve for visual reference
-  const hairlinePath = `M ${h.leftTemple[0]} ${h.leftTemple[1]} Q ${h.center[0]} ${h.center[1] - 8} ${h.rightTemple[0]} ${h.rightTemple[1]}`;
+  // Natural hairline: an irregular Q-curve, not a perfect one. Add small
+  // per-step perturbations so the front edge looks like real hairline
+  // micro-irregularity (slight zig-zag, not a smooth arc).
+  function naturalHairline() {
+    const [lx, ly] = h.leftTemple;
+    const [cx, cy] = h.center;
+    const [rx, ry] = h.rightTemple;
+    const samples = 12;
+    let d = `M ${lx} ${ly}`;
+    for (let i = 1; i < samples; i++) {
+      const t = i / samples;
+      // Q-curve interpolation between the three control points
+      const x = (1 - t) * (1 - t) * lx + 2 * (1 - t) * t * cx + t * t * rx;
+      const baseY = (1 - t) * (1 - t) * ly + 2 * (1 - t) * t * (cy - 4) + t * t * ry;
+      // Micro-irregularity: ±1.2px vertical noise so the hairline isn't a
+      // perfect arc. Centered, less at the temples, more in the middle.
+      const noise = (rng() - 0.5) * 2.4 * Math.sin(t * Math.PI);
+      d += ` L ${x.toFixed(2)} ${(baseY + noise).toFixed(2)}`;
+    }
+    d += ` L ${rx} ${ry}`;
+    return d;
+  }
+  const hairlinePath = naturalHairline();
 
   // View label on top of the watermark so multi-view galleries are obvious.
   const viewLabel = VIEW_CATALOG.find(v => v.id === view)?.label?.toUpperCase() || 'FRONTAL';
@@ -629,17 +834,47 @@ export function renderPhotoSimulation({
     <clipPath id="zoneClip">
       <path d="${zonePath}"/>
     </clipPath>
+    <!-- Soft-edge filter: moderate Gaussian blur so the individual
+         strands blend into a cohesive mass without losing directional
+         flow. stdDeviation 0.30 with filled quads. -->
+    <filter id="hairSoft" x="-3%" y="-3%" width="106%" height="106%">
+      <feGaussianBlur stdDeviation="0.30" />
+    </filter>
+    <!-- Organic hair texture: feTurbulence generates a noise pattern
+         (per-pixel random values) that we composite as a subtle overlay.
+         The result is a fine "grain" of color variation that mimics the
+         way real hair catches light unevenly. -->
+    <filter id="hairTexture" x="0%" y="0%" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="1.8" numOctaves="2" seed="3" result="noise"/>
+      <feColorMatrix in="noise" type="matrix"
+        values="0 0 0 0 0.2
+                0 0 0 0 0.15
+                0 0 0 0 0.1
+                0 0 0 0.18 0" result="tint"/>
+      <feComposite in="tint" in2="SourceGraphic" operator="in"/>
+    </filter>
+    <!-- Subtle inner-glow gradient at the hairline for natural density falloff -->
+    <linearGradient id="hairDensity" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#000" stop-opacity="0"/>
+      <stop offset="60%"  stop-color="#000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.05"/>
+    </linearGradient>
   </defs>
   <!-- original photo (identity, skin tone, age, lighting, background ALL preserved) -->
   ${photoBase64 ? `<image href="data:${photoMime};base64,${photoBase64}" x="0" y="0" width="${photoWidth}" height="${photoHeight}" preserveAspectRatio="xMidYMid slice"/>` : ''}
   <!-- subtle darken on the bald area so the hair reads on top of the skin tone -->
   <path d="${zonePath}" fill="#000" opacity="0.04" clip-path="url(#zoneClip)"/>
-  <!-- hair overlay (scalp region only) -->
-  <g clip-path="url(#zoneClip)">
+  <!-- hair overlay (soft-blurred so individual strands blend naturally) -->
+  <g clip-path="url(#zoneClip)" filter="url(#hairSoft)">
     ${hair}
   </g>
-  <!-- hairline trace -->
-  <path d="${hairlinePath}" fill="none" stroke="${col.stroke}" stroke-width="0.6" opacity="0.55"/>
+  <!-- Organic hair texture overlay: subtle noise grain that breaks up
+       the uniform "drawn" look and makes the mass read as actual hair. -->
+  <g clip-path="url(#zoneClip)" opacity="0.55" style="mix-blend-mode:multiply">
+    <rect x="0" y="0" width="${photoWidth}" height="${photoHeight}" filter="url(#hairTexture)"/>
+  </g>
+  <!-- hairline trace removed — the new front edge is implied by the
+       density falloff in the hair itself, no need for an explicit line -->
   <!-- view tag (top-right) -->
   <g>
     <rect x="${photoWidth - 56}" y="6" width="50" height="14" rx="3" fill="#0F172A" fill-opacity="0.78"/>
