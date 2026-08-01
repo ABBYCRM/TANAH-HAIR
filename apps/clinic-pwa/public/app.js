@@ -45,7 +45,7 @@ function loginView() {
           <p id="login-error" class="form-error" role="alert"></p>
         </form>
         <div class="login-demo">
-          <p class="eyebrow" style="margin:0 0 6px;">Demo accounts (password: 1234)</p>
+          <p class="eyebrow login-demo-title">Demo accounts (password: 1234)</p>
           <button type="button" class="demo-account" data-email="admin@tanah.hair" data-name="Administrator">
             <strong>admin@tanah.hair</strong>
             <span>Full access · Gemini settings</span>

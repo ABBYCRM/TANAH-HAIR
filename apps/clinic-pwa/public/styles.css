@@ -1004,6 +1004,7 @@ tr:hover td { background: var(--slate-50); }
   letter-spacing: 1.2px;
   font-weight: 600;
 }
+.login-demo-title { margin: 0 0 6px; }
 .demo-account {
   display: flex;
   flex-direction: column;
