@@ -529,7 +529,9 @@ async function visualizationView() {
             </label>
           </div>
           <div class="button-row">
-            <button class="primary" type="submit" id="sim-render">Render</button>
+            <button class="primary" type="button" id="sim-ai-generate">AI Generate (Gemini)</button>
+            <button class="secondary" type="button" id="sim-ai-multi">AI 4-view (Gemini)</button>
+            <button class="secondary" type="submit" id="sim-render">Render (parametric)</button>
             <button class="secondary" type="button" id="sim-variants">3 alternatives</button>
             <button class="secondary" type="button" id="sim-multi">Multi-view</button>
           </div>
@@ -694,6 +696,81 @@ async function renderSimulatorView() {
     document.querySelector('#sim-multi-close')?.addEventListener('click', () => {
         const panel = document.querySelector('#sim-multi-panel');
         panel.classList.add('sim-variants-hidden');
+    });
+    // AI Generate (Gemini): sends the bundled demo photo + structured
+    // prompt with all selected parameters. The model scans the picture,
+    // adapts the new hairline to the actual head shape, and preserves
+    // identity. Falls back to the parametric render if Gemini is down.
+    document.querySelector('#sim-ai-generate')?.addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        const renderBtn = document.querySelector('#sim-render');
+        const variantsBtn = document.querySelector('#sim-variants');
+        const multiBtn = document.querySelector('#sim-multi');
+        const multiAiBtn = document.querySelector('#sim-ai-multi');
+        [button, renderBtn, variantsBtn, multiBtn, multiAiBtn].forEach(b => b.disabled = true);
+        const originalLabel = button.textContent;
+        button.textContent = 'Scanning picture with Gemini…';
+        const wrap = document.querySelector('#sim-after-wrap');
+        wrap.classList.add('visual-placeholder');
+        wrap.innerHTML = `<span>⏳</span><p>Gemini is analyzing the head shape and generating the simulation. This usually takes 5–15 seconds.</p>`;
+        try {
+            const form = document.querySelector('#sim-form');
+            const body = Object.fromEntries(new FormData(form));
+            const result = await api('/simulator/ai-generate', { method: 'POST', body: JSON.stringify(body) });
+            wrap.classList.remove('visual-placeholder');
+            // The Gemini result is high-res; constrain in CSS so it doesn't
+            // blow out the layout.
+            wrap.innerHTML = `<img src="${result.outputDataUrl}" alt="AI-generated hair-transplant simulation" style="max-height:360px;width:auto;display:block;margin:0 auto;border-radius:6px"/><p class="muted">Model: ${escapeHtml(result.model)} · params: ${escapeHtml(JSON.stringify({ hairline: body.hairline, zone: body.zone, length: body.length, color: body.color, curl: body.curl, fullness: body.fullness, technique: body.technique, sessions: body.sessions }))}</p>`;
+            const sum = document.querySelector('#sim-summary');
+            sum.className = 'chip';
+            sum.textContent = `AI · ${body.hairline} · ${body.color}`;
+        }
+        catch (error) {
+            toast('AI generator unavailable — falling back to parametric render. ' + error.message, 'error');
+            // Fallback: trigger the parametric render
+            const form = document.querySelector('#sim-form');
+            form.requestSubmit();
+        }
+        finally {
+            [button, renderBtn, variantsBtn, multiBtn, multiAiBtn].forEach(b => b.disabled = false);
+            button.textContent = originalLabel || 'AI Generate (Gemini)';
+        }
+    });
+    // AI 4-view: generate front / top / side / back in parallel. Each is
+    // a separate Gemini call with a view-specific framing instruction.
+    // Total time ~30-60s (2 in parallel × 2 batches).
+    document.querySelector('#sim-ai-multi')?.addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        const renderBtn = document.querySelector('#sim-render');
+        const variantsBtn = document.querySelector('#sim-variants');
+        const multiBtn = document.querySelector('#sim-multi');
+        const aiBtn = document.querySelector('#sim-ai-generate');
+        [button, renderBtn, variantsBtn, multiBtn, aiBtn].forEach(b => b.disabled = true);
+        const originalLabel = button.textContent;
+        button.textContent = 'Generating 4 views with Gemini…';
+        const grid = document.querySelector('#sim-multi-grid');
+        const panel = document.querySelector('#sim-multi-panel');
+        panel.classList.remove('sim-variants-hidden');
+        grid.innerHTML = '<div class="muted" style="grid-column:1/-1;text-align:center;padding:40px"><p>⏳ Generating 4 views (front / top / side / back). Each is a separate AI render. This usually takes 30–60 seconds.</p></div>';
+        try {
+            const form = document.querySelector('#sim-form');
+            const body = Object.fromEntries(new FormData(form));
+            const result = await api('/simulator/ai-multi-view', { method: 'POST', body: JSON.stringify(body) });
+            grid.innerHTML = result.views.map((v) => {
+                if (v.error) {
+                    return `<figure class="variant-card"><div class="visual-placeholder" style="height:200px"><span>!</span><p>${escapeHtml(v.error)}</p></div><figcaption><strong>${escapeHtml(v.view.toUpperCase())}</strong><span>Failed</span></figcaption></figure>`;
+                }
+                return `<figure class="variant-card"><img src="${v.outputDataUrl}" alt="${escapeHtml(v.view)} view" style="max-height:300px;width:auto;display:block;margin:0 auto"/><figcaption><strong>${escapeHtml(v.view.toUpperCase())}</strong><span>${escapeHtml(v.model)} · AI</span></figcaption></figure>`;
+            }).join('');
+        }
+        catch (error) {
+            toast('AI 4-view failed: ' + error.message, 'error');
+            grid.innerHTML = `<p class="muted">AI 4-view failed: ${escapeHtml(error.message)}</p>`;
+        }
+        finally {
+            [button, renderBtn, variantsBtn, multiBtn, aiBtn].forEach(b => b.disabled = false);
+            button.textContent = originalLabel || 'AI 4-view (Gemini)';
+        }
     });
 }
 async function settingsView() {

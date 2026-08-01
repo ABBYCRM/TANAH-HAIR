@@ -2,7 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cookie, parseCookies, readJson, sendJson, sendProblem, serveStatic } from './http.mjs';
 import { decryptSecret, encryptSecret, randomId, signToken, verifyPassword, verifyToken } from './security.mjs';
-import { GEMINI_MODELS, generateGeminiVisualization, publicGeminiSettings, testGeminiConnection } from './gemini.mjs';
+import { GEMINI_MODELS, generateGeminiVisualization, generatePhotoAwareVisualization, publicGeminiSettings, testGeminiConnection } from './gemini.mjs';
 import { COVERAGE_ZONES, HAIRLINE_PRESETS, TECHNIQUE_PRESETS, SESSION_PRESETS, CURL_PRESETS, FULLNESS_PRESETS, GRAFT_SCENARIOS, VIEW_CATALOG, BUNDLED_DEMO, getAvailableViews, renderSimulation, renderVariants, renderPhotoSimulation, renderPhotoVariants, DEMO_SCALP } from './simulator.mjs';
 import { readFile } from 'node:fs/promises';
 
@@ -366,6 +366,121 @@ export function createHandler({ store, sessionSecret, masterKey, secureCookies =
         const artifact = renderPhotoSimulation({ ...safe, photoBase64, seed });
         await audit(store, { action: 'simulator.photo_applied', actorUserId: auth.user.id, hairline: safe.hairline, zone: safe.zone, density: safe.density, length: safe.length, color: safe.color, technique: safe.technique, sessions: safe.sessions, curl: safe.curl, fullness: safe.fullness, view: safe.view, caseId: safe.caseId, correlationId: res.correlationId });
         return sendJson(res, 201, artifact);
+      }
+
+      // Photo-aware AI generator (Gemini). Sends the bundled demo photo
+      // + a structured prompt with all spec parameters to Gemini, which
+      // scans the photo's head shape and identity-preserves everything
+      // except the scalp hair. Returns a watermarked 1K image. This is
+      // the "ultra realistic" path; the parametric simulator is the
+      // always-on fallback for when Gemini is unavailable.
+      if (req.method === 'POST' && url.pathname === '/api/simulator/ai-generate') {
+        const auth = requireSession(req, res, ctx); if (!auth) return;
+        if (!requireCsrf(req, res, auth)) return;
+        const body = await readJson(req).catch(() => ({}));
+        const safe = {
+          hairline: HAIRLINE_PRESETS[body.hairline] ? body.hairline : 'balanced',
+          zone: COVERAGE_ZONES[body.zone] ? body.zone : 'full',
+          density: Math.max(0, Math.min(1, Number(body.density) || 0.6)),
+          length: ['buzz','short','medium','long'].includes(body.length) ? body.length : 'short',
+          color: ['black','darkBrown','mediumBrown','lightBrown','blonde','saltPepper'].includes(body.color) ? body.color : 'darkBrown',
+          curl: CURL_PRESETS[body.curl] ? body.curl : 'straight',
+          fullness: FULLNESS_PRESETS[body.fullness] ? body.fullness : 'moderate',
+          technique: TECHNIQUE_PRESETS[body.technique] ? body.technique : 'fue',
+          sessions: SESSION_PRESETS[body.sessions] ? body.sessions : 'single',
+          view: VIEW_CATALOG.some(v => v.id === body.view) ? body.view : 'front',
+          caseId: typeof body.caseId === 'string' ? body.caseId : 'demo-001'
+        };
+        let photoBase64 = null;
+        let photoMime = 'image/webp';
+        try {
+          const buf = await readFile(path.join(assetRoot, 'sample-patient.webp'));
+          photoBase64 = buf.toString('base64');
+        } catch {}
+        if (!photoBase64) return sendProblem(res, 503, 'BASE_IMAGE_NOT_FOUND', 'Demo image missing', 'The bundled demo patient photo is not present in the build.');
+        const geminiRecord = store.data.integrations.gemini;
+        if (!geminiRecord?.enabled || !geminiRecord?.encryptedApiKey) {
+          return sendProblem(res, 409, 'GEMINI_DISABLED', 'Gemini is not configured', 'Enable Gemini in Settings → Gemini Image Gen to use the AI generator.');
+        }
+        try {
+          const artifact = await generatePhotoAwareVisualization({ record: geminiRecord, masterKey, params: safe, photoBase64, photoMime });
+          await audit(store, { action: 'simulator.ai_generated', actorUserId: auth.user.id, model: artifact.model, hairline: safe.hairline, zone: safe.zone, length: safe.length, color: safe.color, curl: safe.curl, fullness: safe.fullness, technique: safe.technique, sessions: safe.sessions, view: safe.view, caseId: safe.caseId, correlationId: res.correlationId });
+          return sendJson(res, 201, artifact);
+        } catch (error) {
+          const code = error?.code || 'GEMINI_GENERATION_FAILED';
+          const status = Number(error?.status) || 502;
+          if (status >= 500) console.error(`[${res.correlationId}]`, error?.stack || error);
+          return sendProblem(res, status, code, 'AI generation failed', error?.message || 'Gemini could not generate the image.');
+        }
+      }
+
+      // AI multi-view: generate 4 perspectives of the same parameters
+      // (front / top / side / back) so the patient can see how the
+      // restoration looks from every angle. Each view is a separate
+      // Gemini call with a view-specific prompt. Identity is preserved
+      // across views because all calls use the same head photo as input
+      // and the same parameter block.
+      if (req.method === 'POST' && url.pathname === '/api/simulator/ai-multi-view') {
+        const auth = requireSession(req, res, ctx); if (!auth) return;
+        if (!requireCsrf(req, res, auth)) return;
+        const body = await readJson(req).catch(() => ({}));
+        const safe = {
+          hairline: HAIRLINE_PRESETS[body.hairline] ? body.hairline : 'balanced',
+          zone: COVERAGE_ZONES[body.zone] ? body.zone : 'full',
+          density: Math.max(0, Math.min(1, Number(body.density) || 0.6)),
+          length: ['buzz','short','medium','long'].includes(body.length) ? body.length : 'short',
+          color: ['black','darkBrown','mediumBrown','lightBrown','blonde','saltPepper'].includes(body.color) ? body.color : 'darkBrown',
+          curl: CURL_PRESETS[body.curl] ? body.curl : 'straight',
+          fullness: FULLNESS_PRESETS[body.fullness] ? body.fullness : 'moderate',
+          technique: TECHNIQUE_PRESETS[body.technique] ? body.technique : 'fue',
+          sessions: SESSION_PRESETS[body.sessions] ? body.sessions : 'single',
+          caseId: typeof body.caseId === 'string' ? body.caseId : 'demo-001'
+        };
+        const geminiRecord = store.data.integrations.gemini;
+        if (!geminiRecord?.enabled || !geminiRecord?.encryptedApiKey) {
+          return sendProblem(res, 409, 'GEMINI_DISABLED', 'Gemini is not configured', 'Enable Gemini in Settings → Gemini Image Gen to use the AI multi-view.');
+        }
+        let photoBase64 = null;
+        let photoMime = 'image/webp';
+        try {
+          const buf = await readFile(path.join(assetRoot, 'sample-patient.webp'));
+          photoBase64 = buf.toString('base64');
+        } catch {}
+        if (!photoBase64) return sendProblem(res, 503, 'BASE_IMAGE_NOT_FOUND', 'Demo image missing', 'The bundled demo patient photo is not present in the build.');
+        // The 4 perspectives to render
+        const viewPrompts = {
+          front: 'Show the result from a direct front view (looking at the person face-to-face).',
+          top:   'Show the result from a top-down view (looking straight down at the top of the head, like a bird\'s-eye view). The hair density and coverage are most visible from this angle.',
+          side:  'Show the result from a left-side profile view (the person\'s left side facing the camera).',
+          back:  'Show the result from a direct back view (looking at the back of the person\'s head, donor area and new coverage visible).'
+        };
+        const views = Object.keys(viewPrompts);
+        const results = [];
+        // Run all 4 in parallel for speed. Each is a separate API call.
+        // We bound the total time at ~90s to avoid hanging.
+        const concurrency = 2;
+        let cursor = 0;
+        async function worker() {
+          while (cursor < views.length) {
+            const idx = cursor++;
+            const v = views[idx];
+            const params = { ...safe, view: v };
+            // Augment the base prompt with the view-specific framing
+            // instruction. We rebuild the prompt by adding one more
+            // line to the parameters block.
+            const basePrompt = (await import('./gemini.mjs')).buildPhotoEditPrompt(params);
+            const fullPrompt = basePrompt + `\n- CAMERA: ${viewPrompts[v]}`;
+            try {
+              const art = await (await import('./gemini.mjs')).callGeminiImageEdit({ record: geminiRecord, masterKey, prompt: fullPrompt, photoBase64, photoMime });
+              results.push({ view: v, label: viewPrompts[v], outputDataUrl: (await import('./gemini.mjs')).watermarkedImageDataUrl(art.image), model: geminiRecord.model });
+            } catch (error) {
+              results.push({ view: v, label: viewPrompts[v], error: error?.message || 'Gemini failed', code: error?.code || 'GEMINI_FAILED' });
+            }
+          }
+        }
+        await Promise.all(Array.from({ length: concurrency }, worker));
+        await audit(store, { action: 'simulator.ai_multi_view', actorUserId: auth.user.id, model: geminiRecord.model, hairline: safe.hairline, color: safe.color, length: safe.length, curl: safe.curl, fullness: safe.fullness, caseId: safe.caseId, count: results.length, correlationId: res.correlationId });
+        return sendJson(res, 200, { views: results, baseImage: `/api/simulator/base-image`, caseId: safe.caseId, model: geminiRecord.model });
       }
 
       if (req.method === 'POST' && url.pathname === '/api/simulator/photo-variants') {

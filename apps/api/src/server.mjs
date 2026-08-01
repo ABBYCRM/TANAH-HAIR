@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { JsonStore } from './store.mjs';
+import { encryptSecret } from './security.mjs';
 import { createHandler } from './app.mjs';
 import { normalizeMasterKey, randomId } from './security.mjs';
 
@@ -41,6 +42,31 @@ const store = await new JsonStore({
   adminEmail: process.env.DEMO_ADMIN_EMAIL || 'admin@tanah.hair',
   adminPassword: process.env.DEMO_ADMIN_PASSWORD || '1234'
 }).init();
+
+// Auto-configure the Gemini integration from the GEMINI_API_KEY env var
+// if it isn't already set in the persisted store. This makes the
+// photo-aware simulator work out of the box on fresh deploys where the
+// store is empty (e.g., the data dir is ephemeral).
+if (process.env.GEMINI_API_KEY && !store.data.integrations.gemini?.encryptedApiKey) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const last4 = apiKey.slice(-4);
+  const encrypted = encryptSecret(apiKey, masterKey);
+  await store.mutate(data => {
+    data.integrations.gemini = {
+      provider: 'gemini',
+      encryptedApiKey: encrypted,
+      apiKeyLast4: last4,
+      enabled: true,
+      model: 'gemini-2.5-flash-image',
+      sandboxAcknowledged: true,
+      updatedAt: new Date().toISOString(),
+      lastTestAt: null,
+      lastTestStatus: 'env-var-auto-configured',
+      source: 'env-var'
+    };
+  });
+  console.log('Gemini integration auto-configured from GEMINI_API_KEY env var (model=gemini-2.5-flash-image)');
+}
 
 const server = createServer(createHandler({
   store,

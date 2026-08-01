@@ -101,8 +101,9 @@ test('visualization kill switch and prompt guardrails are enforced', async () =>
     const output = await safe.json();
     assert.match(output.outputDataUrl, /^data:image\/svg\+xml;base64,/);
     const svg = Buffer.from(output.outputDataUrl.split(',')[1], 'base64').toString('utf8');
-    assert.match(svg, /SIMULAÇÃO HIPOTÉTICA/);
-    assert.match(svg, /NÃO É PREVISÃO DE RESULTADO/);
+    // Spec-mandated English watermark (replaces the old PT)
+    assert.match(svg, /HYPOTHETICAL VISUALIZATION/);
+    assert.match(svg, /NOT A PREDICTION OR GUARANTEE OF RESULTS/);
   } finally { await app.close(); }
 });
 
