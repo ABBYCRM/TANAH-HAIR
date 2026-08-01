@@ -1,5 +1,5 @@
 // TANAH-HAIR clinic PWA service worker — minimal offline cache.
-const CACHE = 'tanah-hair-clinic-v1';
+const CACHE = 'tanah-hair-clinic-v2';
 const PRECACHE = [
   '/clinic/',
   '/clinic/index.html',
